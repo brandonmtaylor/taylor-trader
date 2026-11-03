@@ -88,8 +88,8 @@ def load_config(path: Path | str = "config.toml") -> Config:
     if mode not in ("paper", "live"):
         raise ConfigError(f"mode must be 'paper' or 'live', got {mode!r}")
     feed = raw.get("feed", "iex")
-    if feed not in ("iex", "sip"):
-        raise ConfigError(f"feed must be 'iex' or 'sip', got {feed!r}")
+    if feed not in ("iex", "sip", "yahoo"):
+        raise ConfigError(f"feed must be 'iex', 'sip' or 'yahoo', got {feed!r}")
 
     strategies = []
     for i, block in enumerate(raw.get("strategies", [])):

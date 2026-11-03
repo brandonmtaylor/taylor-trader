@@ -7,8 +7,13 @@ mode = "paper"
 # Where the data cache, journal and logs live (git-ignored).
 data_dir = "var"
 
-# Alpaca data feed: "iex" (free real-time) or "sip" (free for history older than 15 minutes).
-feed = "iex"
+# Where the service gets price bars. All three are free.
+#   "yahoo" Yahoo Finance: every exchange and current, so it matches backtests (which use SIP).
+#           Unofficial, so if it fails or falls behind the service switches to "iex" on its own
+#           and back again when Yahoo recovers. Hourly strategies always use "iex".
+#   "iex"   Alpaca, real time, but one exchange (~2-3% of volume): prices close, volume thin.
+#   "sip"   Alpaca, every exchange, but the newest 15 minutes are held back. Backtests only.
+feed = "yahoo"
 
 # ---------------------------------------------------------------------------
 # Strategies: pick any from `taylortrader strategies`. Add as many blocks as you want.

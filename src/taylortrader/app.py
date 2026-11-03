@@ -38,9 +38,25 @@ def open_journal(cfg: Config) -> Journal:
     return Journal(cfg.data_dir / "journal.db")
 
 
+def build_market_data(cfg: Config, creds, journal=None):
+    """The configured feed. "yahoo" is wrapped with an automatic fallback to Alpaca IEX
+    (IEX, not SIP: the free SIP feed holds back the newest 15 minutes, too stale to trade on)."""
+    from taylortrader.data import FallbackData, MarketData, YahooData
+
+    cache = cfg.data_dir / "cache"
+    if cfg.feed != "yahoo":
+        return MarketData(creds, cache, feed=cfg.feed)
+
+    def on_switch(message: str, level: str) -> None:
+        getattr(log, level)("data feed: %s", message)
+        if journal is not None:
+            journal.event("data", message, level)
+
+    return FallbackData(YahooData(), MarketData(creds, cache, feed="iex"), on_switch=on_switch)
+
+
 def build_service(cfg: Config, dry_run: bool = False):
     from taylortrader.broker import AlpacaBroker
-    from taylortrader.data import MarketData
     from taylortrader.service import Service
 
     creds = load_alpaca_credentials(cfg.mode)
@@ -48,11 +64,12 @@ def build_service(cfg: Config, dry_run: bool = False):
     for n in notes:
         log.info("alerts %s", n)
     hc = get_secret("HEALTHCHECK_URL")
+    journal = open_journal(cfg)
     return Service(
         cfg=cfg,
         broker=AlpacaBroker(creds),
-        market_data=MarketData(creds, cfg.data_dir / "cache", feed=cfg.feed),
-        journal=open_journal(cfg),
+        market_data=build_market_data(cfg, creds, journal),
+        journal=journal,
         alerts=alerts,
         dry_run=dry_run,
         healthcheck_url=hc.get_secret_value() if hc else None,

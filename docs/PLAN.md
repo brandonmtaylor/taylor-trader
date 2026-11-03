@@ -21,7 +21,7 @@ It trades on paper unless you explicitly turn live trading on.
 |---|---|
 | Language | Python 3.13 engine; TypeScript only for the dashboard UI |
 | Broker | Alpaca via `alpaca-py` (pinned), behind a broker adapter |
-| Market data | Alpaca free plan: full SIP history, IEX real-time; cached locally |
+| Market data | Live: Yahoo Finance (all exchanges, current; unofficial) with automatic fallback to Alpaca IEX. Backtests: Alpaca SIP history. Cached locally |
 | Timeframe | Compare 5-minute vs hourly/daily in backtests before choosing |
 | Autonomy | Fully autonomous, bounded by the guardrails engine |
 | Runs on | Mac mini, launchd service (no cron + sleep) |

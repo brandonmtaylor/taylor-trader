@@ -107,7 +107,9 @@ def cmd_backtest(args) -> int:
 
     cfg = load_config(args.config)
     creds = load_alpaca_credentials("paper")  # data only; never needs live keys
-    md = MarketData(creds, cfg.data_dir / "cache", feed=args.feed or cfg.feed)
+    # Yahoo only keeps ~60 days of 5-minute bars, so backtests use Alpaca. SIP is the closest match:
+    # Yahoo's 5-minute bars agree with SIP to the cent.
+    md = MarketData(creds, cfg.data_dir / "cache", feed=args.feed or ("sip" if cfg.feed == "yahoo" else cfg.feed))
     start = datetime.now(UTC) - timedelta(days=args.days)
     df = md.bars(args.symbol.upper(), args.timeframe, start)
     print(f"{args.symbol.upper()} {args.timeframe} {md.feed.upper()}: {len(df):,} bars "
@@ -225,15 +227,14 @@ def cmd_install_service(args) -> int:
 def cmd_dashboard(args) -> int:
     import uvicorn
 
-    from taylortrader.app import build_alerts, open_journal
+    from taylortrader.app import build_alerts, build_market_data, open_journal
     from taylortrader.broker import AlpacaBroker
-    from taylortrader.data import MarketData
     from taylortrader.web.api import create_app
 
     cfg = load_config(args.config)
     setup_logging(level=logging.INFO)
     creds = load_alpaca_credentials(cfg.mode)
-    app = create_app(cfg, AlpacaBroker(creds), MarketData(creds, cfg.data_dir / "cache", feed=cfg.feed),
+    app = create_app(cfg, AlpacaBroker(creds), build_market_data(cfg, creds),
                      open_journal(cfg), build_alerts(cfg)[1])
     print(f"TaylorTrader dashboard: http://127.0.0.1:{args.port}  (Ctrl-C to stop)")
     uvicorn.run(app, host="127.0.0.1", port=args.port, log_level="warning")
