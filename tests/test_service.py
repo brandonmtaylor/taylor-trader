@@ -287,8 +287,8 @@ def test_one_strategy_owns_each_symbol(tmp_path):
 
 def test_config_secret_names(tmp_path):
     cfg = tmp_path / "c.toml"
-    cfg.write_text('[alerts]\nemail_keychain_service = "trading-email"\n')
-    assert load_config(cfg).alerts.email_keychain_service == "trading-email"
+    cfg.write_text('[alerts]\nntfy_server = "https://ntfy.example.com"\n')
+    assert load_config(cfg).alerts.ntfy_server == "https://ntfy.example.com"
     cfg.write_text('[alerts]\nntfy_topic = "abc"\n')
     with pytest.raises(ConfigError, match="looks like a secret"):
         load_config(cfg)

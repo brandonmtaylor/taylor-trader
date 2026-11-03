@@ -23,13 +23,12 @@ def build_alerts(cfg: Config) -> tuple[Alerts, list[str]]:
         notes.append("ntfy: OFF (set NTFY_TOPIC in the Keychain or .env)")
     a = cfg.alerts
     if a.email_from and a.email_to:
-        fallback = (a.email_keychain_service, a.email_from) if a.email_keychain_service else None
-        password = get_secret("EMAIL_PASSWORD", keychain_fallback=fallback)
+        password = get_secret("EMAIL_PASSWORD")
         if password:
             alerts.email.append(EmailNotifier(a.email_from, password, a.email_to, a.smtp_host, a.smtp_port))
             notes.append(f"email: on ({len(a.email_to)} recipient(s))")
         else:
-            notes.append("email: OFF (no EMAIL_PASSWORD found)")
+            notes.append("email: OFF (set EMAIL_PASSWORD in the Keychain or .env)")
     else:
         notes.append("email: OFF (set email_from and email_to in [alerts])")
     return alerts, notes

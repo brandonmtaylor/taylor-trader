@@ -11,8 +11,8 @@ from typing import Any
 from guardrails import Limits
 
 TIMEFRAMES = ("1Min", "5Min", "15Min", "1Hour", "1Day")
-# Setting names that look like they hold a secret value. "email_keychain_service" is fine;
-# "api_key", "secret_key", "ntfy_token", "password" are not.
+# Setting names that look like they hold a secret value ("api_key", "secret_key", "ntfy_topic",
+# "password", "healthcheck_url"). Those belong in the environment, .env or the Keychain.
 _SECRET_NAME = re.compile(r"(?i)(secret|password|passwd|token|(^|_)key$|(^|_)key_id$|api_key|topic$|url$)")
 
 
@@ -37,7 +37,6 @@ class AlertsConfig:
     ntfy_server: str = "https://ntfy.sh"
     email_from: str = ""
     email_to: list[str] = field(default_factory=list)
-    email_keychain_service: str = ""  # optional extra Keychain service to find the email password
     smtp_host: str = "smtp.gmail.com"
     smtp_port: int = 587
 

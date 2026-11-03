@@ -76,23 +76,13 @@ def _read_keychain(name: str, service: str = KEYCHAIN_SERVICE) -> str | None:
     return value if result.returncode == 0 and value else None
 
 
-def get_secret(
-    name: str,
-    dotenv_path: Path | None = None,
-    keychain_fallback: tuple[str, str] | None = None,
-) -> SecretStr | None:
-    """Look up one secret: environment, then .env, then Keychain. Returns None if absent.
-
-    keychain_fallback=(service, account) adds one more Keychain lookup, e.g. a password stored
-    by another tool under a different service name.
-    """
+def get_secret(name: str, dotenv_path: Path | None = None) -> SecretStr | None:
+    """Look up one secret: environment, then .env, then Keychain (service "taylortrader")."""
     value = os.environ.get(name) or None
     if value is None:
         value = _read_dotenv(dotenv_path or Path(".env")).get(name)
     if value is None:
         value = _read_keychain(name)
-    if value is None and keychain_fallback:
-        value = _read_keychain(keychain_fallback[1], service=keychain_fallback[0])
     if value is None:
         return None
     _LOADED_SECRETS.add(value)
