@@ -1,3 +1,4 @@
+import dataclasses
 import sqlite3
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -293,3 +294,30 @@ def test_config_secret_names(tmp_path):
     cfg.write_text('[alerts]\nntfy_topic = "abc"\n')
     with pytest.raises(ConfigError, match="looks like a secret"):
         load_config(cfg)
+
+
+def test_one_symbol_failing_does_not_stop_the_others(svc):
+    class FlakyData(FakeData):
+        def bars(self, symbol, timeframe, start, end=None):
+            if symbol == "BAD":
+                raise ConnectionError("no data for BAD")
+            return super().bars(symbol, timeframe, start, end)
+
+    FLAGS["entry"] = True
+    svc.market_data = FlakyData()
+    svc.cfg = dataclasses.replace(svc.cfg, strategies=[
+        StrategyConfig(name="test_signal", symbols=["BAD", "VRT"], timeframe="5Min", allocation_pct=20, stop_loss_pct=10)])
+    svc.tick()  # does not raise
+    assert [i.symbol for i in svc.broker.entries] == ["VRT"]
+    errors = svc.journal.db.execute("SELECT message FROM events WHERE kind='error'").fetchall()
+    assert len(errors) == 1 and "BAD" in errors[0][0]
+
+
+def test_every_symbol_failing_raises_into_the_error_count(svc):
+    class DownData(FakeData):
+        def bars(self, *a, **k):
+            raise ConnectionError("network down")
+
+    svc.market_data = DownData()
+    with pytest.raises(ConnectionError):
+        svc.tick()

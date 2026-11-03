@@ -124,9 +124,23 @@ class Service:
             return max(30.0, min(300.0, until_open))
 
         self._maybe_open_note()
-        for sc in self.cfg.enabled_strategies:
-            for symbol in sc.symbols:
+        # One symbol failing (bad data, a rejected order) must not stop the others from being
+        # checked. If every symbol fails, it's systemic: raise so the loop's error count applies.
+        jobs = [(sc, symbol) for sc in self.cfg.enabled_strategies for symbol in sc.symbols]
+        failures = []
+        for sc, symbol in jobs:
+            try:
                 self.evaluate(sc, symbol, snap)
+            except Exception as e:  # isolated per symbol, reported below
+                log.exception("%s %s failed", sc.name, symbol)
+                failures.append((sc, symbol, e))
+        if failures and len(failures) == len(jobs):
+            raise failures[0][2]
+        for sc, symbol, e in failures:
+            msg = f"{sc.name} {symbol}: {type(e).__name__}: {e}"
+            self.journal.event("error", msg, "error")
+            self.alerts.send("TaylorTrader error", f"{msg}\nOther symbols kept running.", Level.WARNING,
+                             key=f"err:{sc.name}:{symbol}:{type(e).__name__}")
         return float(self.cfg.service.loop_seconds)
 
     # --- pieces --------------------------------------------------------------------------------
