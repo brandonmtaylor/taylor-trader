@@ -1,0 +1,4 @@
+#!/bin/sh
+# Blocks commits that contain anything that looks like a credential.
+# Enable once per clone:  git config core.hooksPath scripts/githooks
+exec uv run --quiet python -m taylortrader.secretscan --staged

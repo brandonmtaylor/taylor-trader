@@ -1,0 +1,46 @@
+# TaylorTrader configuration. Copy to config.toml (git-ignored) and edit.
+# No secrets go in this file. See .env.example for keys.
+
+# "paper" or "live". Live also requires TAYLORTRADER_ALLOW_LIVE in the environment.
+mode = "paper"
+
+# Where the data cache, journal and logs live (git-ignored).
+data_dir = "var"
+
+# Alpaca data feed: "iex" (free real-time) or "sip" (free for history older than 15 minutes).
+feed = "iex"
+
+# ---------------------------------------------------------------------------
+# Strategies: pick any from `taylortrader strategies`. Add as many blocks as you want.
+# ---------------------------------------------------------------------------
+[[strategies]]
+name = "macd_rsi"          # the original bot's main strategy
+symbols = ["VRT"]
+timeframe = "5Min"         # 1Min, 5Min, 15Min, 1Hour, 1Day
+allocation_pct = 20        # % of equity per position (guardrails cap this too)
+stop_loss_pct = 12         # stop held at Alpaca on every entry
+take_profit_pct = 0        # 0 = no take-profit leg
+enabled = true
+
+# Optional per-strategy parameter overrides (defaults shown by `taylortrader strategies`)
+[strategies.params]
+rsi_buy = 35.5
+rsi_sell = 68
+
+# [[strategies]]
+# name = "ma_20"
+# symbols = ["AAPL", "MSFT"]
+# timeframe = "1Day"
+# allocation_pct = 10
+# stop_loss_pct = 8
+
+# ---------------------------------------------------------------------------
+# Guardrails. These can only be tightened below the built-in hard limits,
+# never loosened. Values above a hard limit are rejected at startup.
+# ---------------------------------------------------------------------------
+[guardrails]
+max_position_pct = 25       # hard limit 50
+max_total_exposure_pct = 90 # hard limit 100 (no margin)
+max_daily_loss_pct = 3      # hard limit 10
+max_trades_per_day = 10     # hard limit 50
+max_stop_loss_pct = 15      # hard limit 25; every entry must carry a stop

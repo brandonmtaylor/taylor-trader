@@ -1,0 +1,35 @@
+# --- Secrets: never commit ---
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets/
+# Local config may hold account-specific settings; commit config.example.toml instead
+config.toml
+
+# --- Runtime data: market data cache, trade journal, logs ---
+var/
+*.db
+*.sqlite
+*.sqlite3
+*.parquet
+*.log
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.ruff_cache/
+dist/
+build/
+*.egg-info/
+
+# --- Dashboard (later) ---
+node_modules/
+
+# --- OS / editors ---
+.DS_Store
+.idea/
+.vscode/
