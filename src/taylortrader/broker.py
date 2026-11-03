@@ -14,6 +14,7 @@ from alpaca.trading.client import TradingClient
 from alpaca.trading.enums import OrderClass, OrderSide, OrderType, QueryOrderStatus, TimeInForce
 from alpaca.trading.requests import (
     GetOrdersRequest,
+    GetPortfolioHistoryRequest,
     MarketOrderRequest,
     StopLossRequest,
     StopOrderRequest,
@@ -85,6 +86,11 @@ class AlpacaBroker:
             GetOrdersRequest(status=QueryOrderStatus.CLOSED, after=start, limit=500)
         )
         return sum(1 for o in orders if o.filled_at is not None)
+
+    def portfolio_history(self, period: str = "1M") -> list[tuple[int, float]]:
+        """Daily account equity as (unix seconds, equity), skipping days before the account had money."""
+        h = self._client.get_portfolio_history(GetPortfolioHistoryRequest(period=period, timeframe="1D"))
+        return [(int(t), float(e)) for t, e in zip(h.timestamp or [], h.equity or []) if e]
 
     def get_order(self, order_id: str):
         return self._client.get_order_by_id(order_id)

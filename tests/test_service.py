@@ -73,7 +73,8 @@ class FakeBroker:
     def clock(self):
         if self.fail_clock:
             raise ConnectionError("alpaca down")
-        return SimpleNamespace(is_open=self.is_open, timestamp=NOW, next_open=NOW + timedelta(hours=20))
+        return SimpleNamespace(is_open=self.is_open, timestamp=NOW, next_open=NOW + timedelta(hours=20),
+                               next_close=NOW + timedelta(hours=6))
 
     def snapshot(self):
         return AccountSnapshot(equity=10_000, cash=10_000 - sum(p.market_value for p in self.positions.values()),

@@ -26,8 +26,9 @@ dist/
 build/
 *.egg-info/
 
-# --- Dashboard (later) ---
+# --- Dashboard ---
 node_modules/
+src/taylortrader/web/static/
 
 # --- OS / editors ---
 .DS_Store

@@ -10,6 +10,7 @@
   alerts-test                    send a test alert to every configured channel
   journal [--import-legacy DB]   recent orders; optionally import the original bot's trades
   install-service [--dry-run]    write launchd agents (prints the commands to start them)
+  dashboard [--port 8787]        read-only dashboard at http://127.0.0.1:8787 (this machine only)
 """
 
 from __future__ import annotations
@@ -221,6 +222,24 @@ def cmd_install_service(args) -> int:
     return 0
 
 
+def cmd_dashboard(args) -> int:
+    import uvicorn
+
+    from taylortrader.app import build_alerts, open_journal
+    from taylortrader.broker import AlpacaBroker
+    from taylortrader.data import MarketData
+    from taylortrader.web.api import create_app
+
+    cfg = load_config(args.config)
+    setup_logging(level=logging.INFO)
+    creds = load_alpaca_credentials(cfg.mode)
+    app = create_app(cfg, AlpacaBroker(creds), MarketData(creds, cfg.data_dir / "cache", feed=cfg.feed),
+                     open_journal(cfg), build_alerts(cfg)[1])
+    print(f"TaylorTrader dashboard: http://127.0.0.1:{args.port}  (Ctrl-C to stop)")
+    uvicorn.run(app, host="127.0.0.1", port=args.port, log_level="warning")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="taylortrader", description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -260,6 +279,9 @@ def main(argv: list[str] | None = None) -> int:
     inst = sub.add_parser("install-service")
     inst.add_argument("--dry-run", action="store_true", help="service decides and alerts but never orders")
     inst.set_defaults(fn=cmd_install_service)
+    dash = sub.add_parser("dashboard")
+    dash.add_argument("--port", type=int, default=8787)
+    dash.set_defaults(fn=cmd_dashboard)
 
     args = parser.parse_args(argv)
     setup_logging(level=logging.DEBUG if args.verbose else logging.WARNING)

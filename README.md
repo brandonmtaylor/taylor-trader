@@ -54,6 +54,18 @@ What the service does on its own:
 - Reports when a broker-side stop closes a position.
 - After 5 errors in a row it stops with a critical alert, and launchd restarts it.
 
+## Dashboard
+A read-only dashboard on this computer only (it binds to 127.0.0.1 and rejects other hosts):
+```bash
+cd dashboard && npm install && npm run build && cd ..   # once, and after UI changes
+uv run taylortrader dashboard                            # http://127.0.0.1:8787
+```
+It shows whether the service is alive (a heartbeat trace that flatlines when it stops), whether
+you're in paper or live mode, every position with its broker-side stop and owning strategy, the
+order journal with reasons, account growth vs. SPY, and the guardrail limits. Controls (kill
+switch, settings) come later. For UI work: `uv run taylortrader dashboard` plus `npm run dev` in
+`dashboard/` (Vite proxies `/api` to it).
+
 ## Picking strategies
 Add a `[[strategies]]` block per strategy in `config.toml`: name, symbols, timeframe, allocation,
 stop-loss, and optional parameter overrides. Run `taylortrader strategies` for the list and defaults.
