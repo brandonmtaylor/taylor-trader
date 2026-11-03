@@ -4,6 +4,12 @@
   doctor                         check config, credentials (present/missing only) and secret hygiene
   account                        read-only account view: positions, stops, unmanaged positions
   backtest SYMBOL [options]      backtest one strategy, or --all, against buy-and-hold
+  run [--dry-run] [--once]       the trading service (launchd runs this)
+  watchdog                       alert if the service's heartbeat is stale (launchd, every 10 min)
+  kill on|off|status             kill switch: blocks new positions; exits and stops keep working
+  alerts-test                    send a test alert to every configured channel
+  journal [--import-legacy DB]   recent orders; optionally import the original bot's trades
+  install-service [--dry-run]    write launchd agents (prints the commands to start them)
 """
 
 from __future__ import annotations
@@ -63,6 +69,11 @@ def cmd_doctor(args) -> int:
     except SecretsError as e:
         print(f"credentials ({mode}): {e}")
         ok = False
+    if ok:
+        from taylortrader.app import build_alerts
+
+        for note in build_alerts(cfg)[1]:
+            print(f"alerts {note}")
     if secretscan.main([]) != 0:
         ok = False
     return 0 if ok else 1
@@ -120,6 +131,96 @@ def cmd_backtest(args) -> int:
     return 0
 
 
+def cmd_run(args) -> int:
+    from taylortrader.app import build_service
+
+    cfg = load_config(args.config)
+    setup_logging(cfg.data_dir / "logs", logging.DEBUG if args.verbose else logging.INFO)
+    svc = build_service(cfg, dry_run=args.dry_run)
+    if args.once:
+        wait = svc.tick()
+        print(f"tick OK; next tick in {wait:.0f}s")
+        return 0
+    svc.run_forever()
+    return 0
+
+
+def cmd_watchdog(args) -> int:
+    from taylortrader.app import build_alerts, open_journal
+    from taylortrader.service import watchdog
+
+    cfg = load_config(args.config)
+    alerts, _ = build_alerts(cfg)
+    healthy = watchdog(open_journal(cfg), alerts, cfg.service.heartbeat_stale_minutes,
+                       cfg.data_dir / "watchdog_alerted")
+    print("healthy" if healthy else "STALE")
+    return 0 if healthy else 1
+
+
+def cmd_kill(args) -> int:
+    from taylortrader.service import kill_file
+
+    cfg = load_config(args.config)
+    path = kill_file(cfg)
+    if args.state == "on":
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("kill switch on\n")
+    elif args.state == "off" and path.exists():
+        path.unlink()
+    print(f"kill switch: {'ON (no new positions)' if path.exists() else 'off'}")
+    return 0
+
+
+def cmd_alerts_test(args) -> int:
+    from taylortrader.alerts import Level
+    from taylortrader.app import build_alerts
+
+    cfg = load_config(args.config)
+    alerts, notes = build_alerts(cfg)
+    for n in notes:
+        print(n)
+    if not alerts.push and not alerts.email:
+        print("no alert channels configured")
+        return 1
+    alerts.send("TaylorTrader test alert", "If you can read this, alerts work.", Level.WARNING, email_copy=True)
+    print("sent")
+    return 0
+
+
+def cmd_journal(args) -> int:
+    from taylortrader.app import open_journal
+
+    cfg = load_config(args.config)
+    j = open_journal(cfg)
+    if args.import_legacy:
+        n = j.import_legacy(Path(args.import_legacy).expanduser())
+        print(f"imported {n} legacy trades from {args.import_legacy}")
+    beat = j.last_beat()
+    print(f"last heartbeat: {beat[0].isoformat() if beat else 'never'} ({beat[1] if beat else '-'})")
+    for o in j.recent_orders(args.limit):
+        print(f"{o['ts']} [{o['mode']}] {o['side']:4} {o['symbol']:6} {o['qty'] or '':>6} "
+              f"{o['status']:9} {o['reason']}")
+    legacy = j.db.execute("SELECT COUNT(*), COUNT(sell_date), ROUND(SUM(profit), 2) FROM legacy_trades").fetchone()
+    if legacy[0]:
+        print(f"legacy trades: {legacy[0]} ({legacy[1]} closed), realized ${legacy[2]:,}")
+    return 0
+
+
+def cmd_install_service(args) -> int:
+    from taylortrader.launchd import SERVICE, WATCHDOG, write_plists
+
+    project = Path(__file__).resolve().parents[2]
+    for path in write_plists(project, args.dry_run):
+        print(f"wrote {path}")
+    print("\nStart (and on every login):")
+    for label in (SERVICE, WATCHDOG):
+        print(f"  launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/{label}.plist")
+    print("Stop:")
+    for label in (SERVICE, WATCHDOG):
+        print(f"  launchctl bootout gui/$(id -u)/{label}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="taylortrader", description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -143,6 +244,22 @@ def main(argv: list[str] | None = None) -> int:
     bt.add_argument("--param", action="append", help="strategy param override, e.g. rsi_buy=30")
     bt.add_argument("--trades", action="store_true", help="list every trade")
     bt.set_defaults(fn=cmd_backtest)
+    run = sub.add_parser("run")
+    run.add_argument("--dry-run", action="store_true", help="decide and alert, but place no orders")
+    run.add_argument("--once", action="store_true", help="one tick, then exit")
+    run.set_defaults(fn=cmd_run)
+    sub.add_parser("watchdog").set_defaults(fn=cmd_watchdog)
+    kill = sub.add_parser("kill")
+    kill.add_argument("state", choices=["on", "off", "status"])
+    kill.set_defaults(fn=cmd_kill)
+    sub.add_parser("alerts-test").set_defaults(fn=cmd_alerts_test)
+    jr = sub.add_parser("journal")
+    jr.add_argument("--import-legacy", metavar="DB")
+    jr.add_argument("--limit", type=int, default=20)
+    jr.set_defaults(fn=cmd_journal)
+    inst = sub.add_parser("install-service")
+    inst.add_argument("--dry-run", action="store_true", help="service decides and alerts but never orders")
+    inst.set_defaults(fn=cmd_install_service)
 
     args = parser.parse_args(argv)
     setup_logging(level=logging.DEBUG if args.verbose else logging.WARNING)

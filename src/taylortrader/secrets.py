@@ -59,12 +59,12 @@ def _read_dotenv(path: Path) -> dict[str, str]:
     return values
 
 
-def _read_keychain(name: str) -> str | None:
+def _read_keychain(name: str, service: str = KEYCHAIN_SERVICE) -> str | None:
     if shutil.which("security") is None:
         return None
     try:
         result = subprocess.run(
-            ["security", "find-generic-password", "-s", KEYCHAIN_SERVICE, "-a", name, "-w"],
+            ["security", "find-generic-password", "-s", service, "-a", name, "-w"],
             capture_output=True,
             text=True,
             timeout=10,
@@ -76,13 +76,23 @@ def _read_keychain(name: str) -> str | None:
     return value if result.returncode == 0 and value else None
 
 
-def get_secret(name: str, dotenv_path: Path | None = None) -> SecretStr | None:
-    """Look up one secret: environment, then .env, then Keychain. Returns None if absent."""
+def get_secret(
+    name: str,
+    dotenv_path: Path | None = None,
+    keychain_fallback: tuple[str, str] | None = None,
+) -> SecretStr | None:
+    """Look up one secret: environment, then .env, then Keychain. Returns None if absent.
+
+    keychain_fallback=(service, account) adds one more Keychain lookup, e.g. a password stored
+    by another tool under a different service name.
+    """
     value = os.environ.get(name) or None
     if value is None:
         value = _read_dotenv(dotenv_path or Path(".env")).get(name)
     if value is None:
         value = _read_keychain(name)
+    if value is None and keychain_fallback:
+        value = _read_keychain(keychain_fallback[1], service=keychain_fallback[0])
     if value is None:
         return None
     _LOADED_SECRETS.add(value)

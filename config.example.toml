@@ -44,3 +44,20 @@ max_total_exposure_pct = 90 # hard limit 100 (no margin)
 max_daily_loss_pct = 3      # hard limit 10
 max_trades_per_day = 10     # hard limit 50
 max_stop_loss_pct = 15      # hard limit 25; every entry must carry a stop
+
+# ---------------------------------------------------------------------------
+# Alerts. The ntfy topic is a secret (anyone who knows it can read your alerts):
+# set NTFY_TOPIC in the Keychain/.env, not here. Optional: HEALTHCHECK_URL (healthchecks.io)
+# alerts you even if this whole machine is off.
+# ---------------------------------------------------------------------------
+[alerts]
+ntfy_server = "https://ntfy.sh"
+# email_from = "you@gmail.com"            # put the Gmail app password in EMAIL_PASSWORD (Keychain/.env)
+# email_to = ["you@gmail.com"]
+# email_keychain_service = "trading-email" # or reuse a password stored under another Keychain service
+
+[service]
+loop_seconds = 30
+heartbeat_stale_minutes = 15   # the watchdog alerts if the service is quiet longer than this
+daily_summary = true
+auto_protect = true            # re-create a missing stop on positions a strategy owns

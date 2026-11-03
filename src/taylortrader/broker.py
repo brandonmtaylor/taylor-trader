@@ -16,6 +16,7 @@ from alpaca.trading.requests import (
     GetOrdersRequest,
     MarketOrderRequest,
     StopLossRequest,
+    StopOrderRequest,
     TakeProfitRequest,
 )
 
@@ -85,6 +86,9 @@ class AlpacaBroker:
         )
         return sum(1 for o in orders if o.filled_at is not None)
 
+    def get_order(self, order_id: str):
+        return self._client.get_order_by_id(order_id)
+
     def snapshot(self) -> AccountSnapshot:
         a = self._client.get_account()
         return AccountSnapshot(
@@ -124,6 +128,16 @@ class AlpacaBroker:
             take_profit=tp,
         )
         log.info("[%s] BUY %s x%d, stop %.2f (%s)", self.mode, intent.symbol, qty, stop.stop_price, intent.reason)
+        return self._client.submit_order(req)
+
+    def place_stop(self, symbol: str, qty: float, stop_price: float):
+        """Standalone GTC stop for an existing long position (used to repair missing protection)."""
+        whole = math.floor(qty)
+        if whole < 1:
+            raise BrokerError(f"{symbol}: can't place a stop on a fractional position ({qty})")
+        req = StopOrderRequest(symbol=symbol, qty=whole, side=OrderSide.SELL,
+                               time_in_force=TimeInForce.GTC, stop_price=_price(stop_price))
+        log.info("[%s] STOP %s x%d at %.2f", self.mode, symbol, whole, req.stop_price)
         return self._client.submit_order(req)
 
     def close_position(self, symbol: str, reason: str = ""):

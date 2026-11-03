@@ -34,6 +34,26 @@ uv run taylortrader backtest VRT --all --timeframe 1Hour --days 1000
 uv run taylortrader account                # read-only: positions, stops, unmanaged positions
 ```
 
+## Running it
+```bash
+security add-generic-password -s taylortrader -a NTFY_TOPIC -w   # a long random topic name; it's a secret
+uv run taylortrader alerts-test            # push + email test
+uv run taylortrader run --dry-run --once   # one tick: decides and alerts, places no orders
+uv run taylortrader install-service --dry-run   # launchd agents; prints the start/stop commands
+uv run taylortrader kill on                # no new positions; exits and stops keep working
+uv run taylortrader journal                # recent orders, heartbeat, imported history
+```
+The service writes a heartbeat every tick. A separate watchdog job (every 10 minutes) pushes a
+critical alert if the heartbeat goes stale, and the daily summary after the close is your "still
+alive" message. Optional: set `HEALTHCHECK_URL` (healthchecks.io) to be alerted even if the whole
+machine is off.
+
+What the service does on its own:
+- Recreates a missing stop on any position a strategy owns; if the stop level is already breached, exits.
+- Alerts (once a day) about positions no strategy owns, and never touches them.
+- Reports when a broker-side stop closes a position.
+- After 5 errors in a row it stops with a critical alert, and launchd restarts it.
+
 ## Picking strategies
 Add a `[[strategies]]` block per strategy in `config.toml`: name, symbols, timeframe, allocation,
 stop-loss, and optional parameter overrides. Run `taylortrader strategies` for the list and defaults.
