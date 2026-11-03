@@ -1,4 +1,4 @@
-"""Command line: taylortrader <command>.
+"""Command line: taylortrader [command]. With no command it opens the dashboard.
 
   strategies                     list strategies you can pick, with their parameters
   doctor                         check config, credentials (present/missing only) and secret hygiene
@@ -9,8 +9,8 @@
   kill on|off|status             kill switch: blocks new positions; exits and stops keep working
   alerts-test                    send a test alert to every configured channel
   journal [--import-legacy DB]   recent orders; optionally import the original bot's trades
-  install-service [--dry-run]    write launchd agents (prints the commands to start them)
-  dashboard [--port 8787]        read-only dashboard at http://127.0.0.1:8787 (this machine only)
+  install-service [--dry-run]    write launchd agents (the dashboard can also start/stop the service)
+  dashboard [--port 8787]        setup, settings and status at http://127.0.0.1:8787 (this machine only)
 """
 
 from __future__ import annotations
@@ -19,6 +19,7 @@ import argparse
 import json
 import logging
 import sys
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -135,16 +136,25 @@ def cmd_backtest(args) -> int:
 
 
 def cmd_run(args) -> int:
+    import os
+
     from taylortrader.app import build_service
+    from taylortrader.service import RestartRequested
 
     cfg = load_config(args.config)
     setup_logging(cfg.data_dir / "logs", logging.DEBUG if args.verbose else logging.INFO)
-    svc = build_service(cfg, dry_run=args.dry_run)
+    svc = build_service(cfg, dry_run=args.dry_run, config_path=None if args.once else args.config)
     if args.once:
         wait = svc.tick()
         print(f"tick OK; next tick in {wait:.0f}s")
         return 0
-    svc.run_forever()
+    try:
+        svc.run_forever()
+    except RestartRequested as r:
+        log.warning("restarting: %s", r)
+        logging.shutdown()
+        # Replace this process with a fresh one: new settings, new broker keys, same arguments.
+        os.execv(sys.executable, [sys.executable, "-m", "taylortrader.cli", *sys.argv[1:]])
     return 0
 
 
@@ -213,7 +223,13 @@ def cmd_install_service(args) -> int:
     from taylortrader.launchd import SERVICE, WATCHDOG, write_plists
 
     project = Path(__file__).resolve().parents[2]
-    for path in write_plists(project, args.dry_run):
+    if args.dry_run:
+        from taylortrader.config import save_config
+
+        cfg = load_config(args.config)
+        save_config(replace(cfg, dry_run=True), args.config)
+        print(f"set dry_run = true in {args.config} (switch it off from the dashboard)")
+    for path in write_plists(project):
         print(f"wrote {path}")
     print("\nStart (and on every login):")
     for label in (SERVICE, WATCHDOG):
@@ -225,19 +241,24 @@ def cmd_install_service(args) -> int:
 
 
 def cmd_dashboard(args) -> int:
+    """Works before anything is set up: the dashboard is where setup happens."""
+    import threading
+    import webbrowser
+
     import uvicorn
 
-    from taylortrader.app import build_alerts, build_market_data, open_journal
-    from taylortrader.broker import AlpacaBroker
     from taylortrader.web.api import create_app
+    from taylortrader.web.runtime import Runtime
 
-    cfg = load_config(args.config)
     setup_logging(level=logging.INFO)
-    creds = load_alpaca_credentials(cfg.mode)
-    app = create_app(cfg, AlpacaBroker(creds), build_market_data(cfg, creds),
-                     open_journal(cfg), build_alerts(cfg)[1])
-    print(f"TaylorTrader dashboard: http://127.0.0.1:{args.port}  (Ctrl-C to stop)")
-    uvicorn.run(app, host="127.0.0.1", port=args.port, log_level="warning")
+    rt = Runtime(config_path=args.config)
+    url = f"http://127.0.0.1:{args.port}"
+    print(f"TaylorTrader dashboard: {url}  (Ctrl-C to stop)")
+    if not rt.configured:
+        print("No settings yet: the dashboard will walk you through setup.")
+    if not args.no_open:
+        threading.Timer(1.0, lambda: webbrowser.open(url)).start()
+    uvicorn.run(create_app(rt), host="127.0.0.1", port=args.port, log_level="warning")
     return 0
 
 
@@ -246,7 +267,7 @@ def main(argv: list[str] | None = None) -> int:
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--config", default="config.toml", type=Path)
     parser.add_argument("-v", "--verbose", action="store_true")
-    sub = parser.add_subparsers(dest="cmd", required=True)
+    sub = parser.add_subparsers(dest="cmd")
     sub.add_parser("strategies").set_defaults(fn=cmd_strategies)
     sub.add_parser("doctor").set_defaults(fn=cmd_doctor)
     sub.add_parser("account").set_defaults(fn=cmd_account)
@@ -280,10 +301,14 @@ def main(argv: list[str] | None = None) -> int:
     inst = sub.add_parser("install-service")
     inst.add_argument("--dry-run", action="store_true", help="service decides and alerts but never orders")
     inst.set_defaults(fn=cmd_install_service)
-    dash = sub.add_parser("dashboard")
+    dash = sub.add_parser("dashboard", help="open the dashboard (the default with no command)")
     dash.add_argument("--port", type=int, default=8787)
+    dash.add_argument("--no-open", action="store_true", help="don't open a browser tab")
     dash.set_defaults(fn=cmd_dashboard)
 
+    argv = sys.argv[1:] if argv is None else argv
+    if not any(a in sub.choices for a in argv) and not any(a in ("-h", "--help") for a in argv):
+        argv = [*argv, "dashboard"]  # `taylortrader` alone opens the dashboard
     args = parser.parse_args(argv)
     setup_logging(level=logging.DEBUG if args.verbose else logging.WARNING)
     try:

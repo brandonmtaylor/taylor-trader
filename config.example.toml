@@ -1,8 +1,13 @@
-# TaylorTrader configuration. Copy to config.toml (git-ignored) and edit.
+# TaylorTrader configuration. The dashboard (`uv run taylortrader`) writes config.toml for you;
+# this file documents every setting if you'd rather copy it and edit by hand.
 # No secrets go in this file. See .env.example for keys.
 
-# "paper" or "live". Live also requires TAYLORTRADER_ALLOW_LIVE in the environment.
+# "paper" or "live". Switch from the dashboard: live needs live keys and a typed confirmation,
+# which sets TAYLORTRADER_ALLOW_LIVE (the service refuses live without it).
 mode = "paper"
+
+# true: decide and alert, but place no orders. New setups start here.
+dry_run = true
 
 # Where the data cache, journal and logs live (git-ignored).
 data_dir = "var"

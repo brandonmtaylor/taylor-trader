@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import plistlib
 import shutil
+import subprocess
 from pathlib import Path
 
 SERVICE = "com.taylortrader.service"
@@ -14,7 +15,8 @@ WATCHDOG = "com.taylortrader.watchdog"
 AGENTS = Path.home() / "Library" / "LaunchAgents"
 
 
-def plists(project: Path, dry_run: bool) -> dict[str, dict]:
+def plists(project: Path) -> dict[str, dict]:
+    """Dry run, paper and live are settings in config.toml, not service arguments."""
     uv = shutil.which("uv") or "/opt/homebrew/bin/uv"
     logs = project / "var" / "logs"
     base = [uv, "run", "--project", str(project), "taylortrader", "--config", str(project / "config.toml")]
@@ -22,7 +24,7 @@ def plists(project: Path, dry_run: bool) -> dict[str, dict]:
     return {
         SERVICE: {
             "Label": SERVICE,
-            "ProgramArguments": [*base, "run", *(["--dry-run"] if dry_run else [])],
+            "ProgramArguments": [*base, "run"],
             "WorkingDirectory": str(project),
             "EnvironmentVariables": env,
             "RunAtLoad": True,
@@ -43,13 +45,67 @@ def plists(project: Path, dry_run: bool) -> dict[str, dict]:
     }
 
 
-def write_plists(project: Path, dry_run: bool, dest: Path = AGENTS) -> list[Path]:
+def write_plists(project: Path, dest: Path = AGENTS) -> list[Path]:
     (project / "var" / "logs").mkdir(parents=True, exist_ok=True)
     dest.mkdir(parents=True, exist_ok=True)
     written = []
-    for label, data in plists(project, dry_run).items():
+    for label, data in plists(project).items():
         path = dest / f"{label}.plist"
         with path.open("wb") as f:
             plistlib.dump(data, f)
         written.append(path)
     return written
+
+
+# --- control (used by the dashboard) -------------------------------------------------------------
+
+def supported() -> bool:
+    return shutil.which("launchctl") is not None
+
+
+def _domain() -> str:
+    import os
+
+    return f"gui/{os.getuid()}"
+
+
+def _launchctl(*args: str) -> subprocess.CompletedProcess:
+    return subprocess.run(["launchctl", *args], capture_output=True, text=True, timeout=20, check=False)
+
+
+def status(label: str = SERVICE, dest: Path = AGENTS) -> dict:
+    """{"supported", "installed", "loaded", "running", "pid"} for one agent."""
+    out = {"supported": supported(), "installed": (dest / f"{label}.plist").exists(),
+           "loaded": False, "running": False, "pid": None}
+    if not out["supported"]:
+        return out
+    r = _launchctl("print", f"{_domain()}/{label}")
+    if r.returncode == 0:
+        out["loaded"] = True
+        for line in r.stdout.splitlines():
+            line = line.strip()
+            if line == "state = running":
+                out["running"] = True
+            elif line.startswith("pid = ") and line[6:].isdigit():
+                out["pid"] = int(line[6:])
+    return out
+
+
+def start(project: Path, dest: Path = AGENTS) -> None:
+    """Write the agents (always current) and load them. Starting twice is harmless."""
+    write_plists(project, dest)
+    for label in (SERVICE, WATCHDOG):
+        if not status(label, dest)["loaded"]:
+            r = _launchctl("bootstrap", _domain(), str(dest / f"{label}.plist"))
+            if r.returncode != 0:
+                raise RuntimeError(f"launchctl couldn't start {label}: {r.stderr.strip() or r.returncode}")
+
+
+def stop(dest: Path = AGENTS) -> None:
+    for label in (SERVICE, WATCHDOG):
+        if status(label, dest)["loaded"]:
+            _launchctl("bootout", f"{_domain()}/{label}")
+
+
+def restart() -> None:
+    _launchctl("kickstart", "-k", f"{_domain()}/{SERVICE}")

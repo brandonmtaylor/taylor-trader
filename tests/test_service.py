@@ -321,3 +321,66 @@ def test_every_symbol_failing_raises_into_the_error_count(svc):
     svc.market_data = DownData()
     with pytest.raises(ConnectionError):
         svc.tick()
+
+
+def test_settings_change_restarts_bad_file_is_ignored(svc, tmp_path):
+    import os
+
+    from taylortrader.config import save_config
+    from taylortrader.service import RestartRequested
+
+    path = tmp_path / "config.toml"
+    cfg = dataclasses.replace(svc.cfg, strategies=[
+        StrategyConfig(name="macd_rsi", symbols=["VRT"], timeframe="5Min", allocation_pct=20, stop_loss_pct=10)])
+    save_config(cfg, path)
+    svc.cfg, svc.config_path = cfg, path
+    svc.config_mtime = svc._mtime()
+    svc.check_config()  # unchanged: nothing happens
+
+    path.write_text(path.read_text().replace("allocation_pct = 20", "allocation_pct = 99"))  # over the limit
+    os.utime(path, (1, 1))
+    svc.check_config()  # invalid: reported, keeps running
+    assert any("still using the old settings" in r["message"]
+               for r in svc.journal.db.execute("SELECT message FROM events WHERE kind='error'"))
+
+    save_config(dataclasses.replace(cfg, dry_run=True), path)
+    os.utime(path, (2, 2))
+    with pytest.raises(RestartRequested, match="paper -> dry run"):
+        svc.check_config()
+
+
+def test_config_writer_round_trips_awkward_values(tmp_path):
+    from taylortrader.config import AlertsConfig, load_config, save_config
+
+    cfg = Config(data_dir=tmp_path, alerts=AlertsConfig(email_from='a"b\\c@x.com', email_to=["x@y.z"]),
+                 strategies=[StrategyConfig(name="macd_rsi", symbols=["BRK.B"], params={"rsi_buy": 30.5})])
+    save_config(cfg, tmp_path / "c.toml")
+    assert load_config(tmp_path / "c.toml") == cfg
+
+
+def test_settings_change_restarts_through_the_real_loop(svc, tmp_path):
+    """The restart signal must leave run_forever as a restart, not be swallowed as an error."""
+    import os
+
+    from taylortrader.config import save_config
+    from taylortrader.service import RestartRequested
+
+    path = tmp_path / "config.toml"
+    cfg = svc.cfg
+    save_config(cfg, path)
+    svc.config_path, svc.config_mtime = path, path.stat().st_mtime
+    ticks = []
+
+    def sleep(_):
+        ticks.append(1)
+        if len(ticks) > 3:  # without the fix the loop would swallow the restart and spin forever
+            pytest.fail("settings change didn't restart the service")
+        if len(ticks) == 1:  # change the settings between the first and second tick
+            save_config(dataclasses.replace(cfg, dry_run=True), path)
+            os.utime(path, (5, 5))
+    svc.sleep = sleep
+    with pytest.raises(RestartRequested):
+        svc.run_forever()
+    kinds = [r[0] for r in svc.journal.db.execute("SELECT kind FROM events")]
+    assert "restart" in kinds and "error" not in kinds
+    assert "TaylorTrader error" not in svc.rec.titles()

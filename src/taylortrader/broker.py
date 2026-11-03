@@ -95,6 +95,13 @@ class AlpacaBroker:
     def get_order(self, order_id: str):
         return self._client.get_order_by_id(order_id)
 
+    def account_info(self) -> dict:
+        """Who this key pair belongs to, for the dashboard's connection test. No secrets."""
+        a = self._client.get_account()
+        number = str(a.account_number or "")
+        return {"account": "…" + number[-4:] if number else None, "status": str(a.status.value if hasattr(a.status, "value") else a.status),
+                "equity": float(a.equity), "paper": self.paper}
+
     def snapshot(self) -> AccountSnapshot:
         a = self._client.get_account()
         return AccountSnapshot(

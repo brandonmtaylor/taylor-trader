@@ -55,7 +55,7 @@ def build_market_data(cfg: Config, creds, journal=None):
     return FallbackData(YahooData(), MarketData(creds, cache, feed="iex"), on_switch=on_switch)
 
 
-def build_service(cfg: Config, dry_run: bool = False):
+def build_service(cfg: Config, dry_run: bool = False, config_path=None):
     from taylortrader.broker import AlpacaBroker
     from taylortrader.service import Service
 
@@ -71,6 +71,7 @@ def build_service(cfg: Config, dry_run: bool = False):
         market_data=build_market_data(cfg, creds, journal),
         journal=journal,
         alerts=alerts,
-        dry_run=dry_run,
+        dry_run=dry_run or cfg.dry_run,
+        config_path=config_path,
         healthcheck_url=hc.get_secret_value() if hc else None,
     )

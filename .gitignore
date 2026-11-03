@@ -37,3 +37,6 @@ src/taylortrader/web/static/
 
 # Private build notes live outside the repo (~/Projects/taylor-trader-notes)
 docs/journal/
+config.toml.bak
+config.tmp
+*.toml.tmp

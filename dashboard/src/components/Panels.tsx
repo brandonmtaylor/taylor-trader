@@ -96,7 +96,7 @@ export function Positions({ account, error }: { account: Account | null; error: 
       )}
       {rows.some((p) => !p.owner) && (
         <p className="note">
-          TaylorTrader doesn't touch positions no strategy owns. Add the symbol to a strategy in config.toml,
+          TaylorTrader doesn't touch positions no strategy owns. <a href="#/strategies">Add the symbol to a strategy</a>,
           or manage it yourself.
         </p>
       )}
@@ -173,10 +173,10 @@ export function Strategies({ status }: { status: Status | null }) {
       <div className="panel__head">
         <div>
           <h2 id="strat-title">Strategies</h2>
-          <p className="panel__sub">From config.toml. Editing here comes in a later version.</p>
+          <p className="panel__sub"><a href="#/strategies">Edit strategies</a> · <a href="#/settings">Edit limits and alerts</a></p>
         </div>
       </div>
-      {list.length === 0 && <p className="empty">No strategies configured. Add one to config.toml.</p>}
+      {list.length === 0 && <p className="empty">No strategies yet. <a href="#/strategies">Add one</a>.</p>}
       <ul className="strats">
         {list.map((s) => (
           <li key={s.name} className={s.enabled ? "" : "is-off"}>

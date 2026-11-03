@@ -1,31 +1,65 @@
-"""Read-only dashboard API. Listens on 127.0.0.1 only and has no endpoints that change anything.
+"""Dashboard API. Listens on 127.0.0.1 only.
 
-Controls (kill switch, settings, paper/live) come in M2, behind their own confirmation flow.
+Reads are GETs. Every change (settings, keys, mode, pause, service) is a POST/PUT/DELETE that
+must carry the `X-TaylorTrader: 1` header and an Origin of this same address:
+- a custom header forces a CORS preflight, which this server never approves, so another
+  website open in your browser can't send one;
+- the Origin check refuses anything that did get through from elsewhere;
+- TrustedHostMiddleware refuses other Host names (DNS rebinding).
+Secret values go in and never come back out: the API reports only whether, and where, each is set.
 """
 
 from __future__ import annotations
 
 import logging
+import os
 import time
 from collections import defaultdict
+from dataclasses import asdict, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel, Field, SecretStr
 
 from guardrails import find_unmanaged_positions
-from taylortrader.config import Config
-from taylortrader.journal import Journal
-from taylortrader.service import kill_file
+from guardrails.limits import HARD_LIMITS
+from taylortrader import launchd
+from taylortrader.config import (
+    FEEDS,
+    TIMEFRAMES,
+    Config,
+    ConfigError,
+    config_to_dict,
+    parse_config,
+    save_config,
+)
+from taylortrader.secrets import (
+    LIVE_CONFIRM_VAR,
+    SETTABLE,
+    AlpacaCredentials,
+    SecretsError,
+    delete_secret,
+    get_secret,
+    keychain_available,
+    secret_source,
+    set_secret,
+)
+from taylortrader.service import describe_mode, kill_file
+from taylortrader.strategies import list_strategies
+from taylortrader.web.runtime import Runtime
 
 log = logging.getLogger(__name__)
 STATIC = Path(__file__).parent / "static"
-PERIODS = {"1M": 31, "3M": 92, "1A": 366}
+PROJECT = Path(__file__).resolve().parents[3]
 BENCHMARK = "SPY"
+GO_LIVE_PHRASE = "GO LIVE"
+WRITE_HEADER = "x-taylortrader"
+FORBIDDEN = "Changes must come from the TaylorTrader dashboard."
 
 
 class TTLCache:
@@ -42,6 +76,9 @@ class TTLCache:
         self._data[key] = (time.monotonic(), value)
         return value
 
+    def clear(self) -> None:
+        self._data.clear()
+
 
 def _broker_call(fn):
     try:
@@ -57,23 +94,148 @@ def _iso(dt) -> str | None:
     return dt.isoformat() if dt else None
 
 
-def create_app(cfg: Config, broker, market_data, journal: Journal, alert_notes: list[str],
-               cache_ttl: float = 10.0) -> FastAPI:
+def _downsample(series, n: int = 400) -> list[dict]:
+    idx = list(range(0, len(series), max(1, len(series) // n)))
+    if idx and idx[-1] != len(series) - 1:
+        idx.append(len(series) - 1)
+    return [{"t": int(series.index[i].timestamp()), "v": round(float(series.iloc[i]), 4)} for i in idx]
+
+
+# --- request bodies ------------------------------------------------------------------------------
+
+class SettingsBody(BaseModel):
+    config: dict[str, Any]
+
+
+class SecretBody(BaseModel):
+    name: str
+    value: SecretStr
+
+
+class AlpacaTestBody(BaseModel):
+    mode: Literal["paper", "live"]
+    key_id: SecretStr | None = None      # omitted: test the stored keys
+    secret_key: SecretStr | None = None
+
+
+class ModeBody(BaseModel):
+    mode: Literal["dry-run", "paper", "live"]
+    confirm: str = ""
+
+
+class PauseBody(BaseModel):
+    paused: bool
+
+
+class ServiceBody(BaseModel):
+    action: Literal["start", "stop", "restart"]
+
+
+class BacktestBody(BaseModel):
+    strategy: str
+    symbol: str = Field(min_length=1, max_length=15)
+    timeframe: str = "5Min"
+    params: dict[str, Any] = {}
+    days: int = Field(365, ge=5, le=1100)
+    allocation_pct: float = Field(100, gt=0, le=100)
+    stop_loss_pct: float = Field(12, gt=0, le=HARD_LIMITS.max_stop_loss_pct)
+    take_profit_pct: float = Field(0, ge=0)
+
+
+def create_app(rt: Runtime, cache_ttl: float = 10.0, project: Path = PROJECT) -> FastAPI:
     app = FastAPI(title="TaylorTrader", docs_url=None, redoc_url=None, openapi_url=None)
     # Reject requests whose Host isn't this machine (blocks DNS-rebinding from web pages).
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=["127.0.0.1", "localhost"])
     cache = TTLCache(cache_ttl)
-    owners = {s: sc.name for sc in cfg.enabled_strategies for s in sc.symbols}
+    dev_origins = {"http://localhost:5173", "http://127.0.0.1:5173"} if os.environ.get("TAYLORTRADER_DEV") else set()
+
+    def guard(request: Request) -> None:
+        """Every write must come from this dashboard, not another site open in the browser."""
+        origin = request.headers.get("origin")
+        same = f"http://{request.headers.get('host', '')}"
+        if request.headers.get(WRITE_HEADER) != "1" or origin not in {same, *dev_origins}:
+            raise HTTPException(403, FORBIDDEN)
+
+    def need_broker():
+        if rt.broker is None:
+            raise HTTPException(503, rt.broker_error or "Not connected to Alpaca.")
+        return rt.broker
+
+    def changed() -> None:
+        rt.reload()
+        cache.clear()
+
+    def save(new: Config) -> Config:
+        try:
+            cfg = save_config(new, rt.config_path)
+        except ConfigError as e:
+            raise HTTPException(422, str(e)) from None
+        changed()
+        return cfg
+
+    def owners() -> dict[str, str]:
+        return {s: sc.name for sc in rt.settings.enabled_strategies for s in sc.symbols}
+
+    def test_keys(mode: str, key_id: SecretStr | None = None, secret: SecretStr | None = None) -> dict[str, Any]:
+        from taylortrader.broker import AlpacaBroker
+
+        prefix = "ALPACA_PAPER" if mode == "paper" else "ALPACA_LIVE"
+        key_id = key_id or get_secret(f"{prefix}_KEY_ID", rt.dotenv_path)
+        secret = secret or get_secret(f"{prefix}_SECRET_KEY", rt.dotenv_path)
+        if not key_id or not secret:
+            raise HTTPException(422, f"No {mode} keys saved yet.")
+        try:
+            info = AlpacaBroker(AlpacaCredentials(key_id, secret, paper=mode == "paper")).account_info()
+        except Exception as e:  # noqa: BLE001 - reported to the user; Alpaca errors never contain keys
+            text = str(e).lower()
+            if any(w in text for w in ("unauthorized", "not authorized", "forbidden", "40110000")):
+                raise HTTPException(422, f"Alpaca didn't accept these as {mode} keys. Check they're from your "
+                                         f"{mode} account and copied in full.") from None
+            raise HTTPException(503, f"Couldn't reach Alpaca: {type(e).__name__}: {str(e)[:200]}") from None
+        return {"ok": True, **info}
+
+    # --- reads -----------------------------------------------------------------------------------
+
+    @app.get("/api/setup")
+    def setup() -> dict[str, Any]:
+        """What the first-run screens need. Secrets map to where they're stored, never to values."""
+        cfg = rt.settings
+        return {
+            "configured": rt.configured,
+            "config_path": str(rt.config_path),
+            "config_error": rt.config_error,
+            "connected": rt.broker is not None,
+            "broker_error": rt.broker_error,
+            "mode": cfg.mode,
+            "dry_run": cfg.dry_run,
+            "has_strategy": bool(cfg.enabled_strategies),
+            "secret_store": "Keychain" if keychain_available() else ".env",
+            "secrets": {n: secret_source(n, rt.dotenv_path) for n in SETTABLE},
+            "service": launchd.status(),
+        }
 
     @app.get("/api/status")
     def status() -> dict[str, Any]:
-        beat = journal.last_beat()
+        cfg = rt.settings
+        beat = rt.journal.last_beat()
         now = datetime.now(UTC)
         age = (now - beat[0]).total_seconds() if beat else None
-        clock = cache.get("clock", lambda: _broker_call(broker.clock))
+        market = None
+        if rt.broker is not None:
+            try:
+                clock = cache.get("clock", lambda: _broker_call(rt.broker.clock))
+                market = {"is_open": clock.is_open, "next_open": _iso(clock.next_open),
+                          "next_close": _iso(clock.next_close)}
+            except HTTPException:
+                market = None
         return {
+            "configured": rt.configured,
+            "connected": rt.broker is not None,
+            "broker_error": rt.broker_error,
             "mode": cfg.mode,
-            "running_mode": beat[1] if beat else None,  # "ok" or "dry-run"
+            "dry_run": cfg.dry_run,
+            "mode_label": describe_mode(cfg.mode, cfg.dry_run),
+            "running_mode": beat[1] if beat else None,  # what the service last reported: "ok" or "dry-run"
             "heartbeat": {
                 "ts": _iso(beat[0]) if beat else None,
                 "age_s": age,
@@ -81,28 +243,25 @@ def create_app(cfg: Config, broker, market_data, journal: Journal, alert_notes: 
                 "stale_after_s": cfg.service.heartbeat_stale_minutes * 60,
             },
             "kill_switch": kill_file(cfg).exists(),
-            "market": {"is_open": clock.is_open, "next_open": _iso(clock.next_open),
-                       "next_close": _iso(clock.next_close)},
-            "strategies": [
-                {"name": sc.name, "symbols": sc.symbols, "timeframe": sc.timeframe,
-                 "allocation_pct": sc.allocation_pct, "stop_loss_pct": sc.stop_loss_pct,
-                 "take_profit_pct": sc.take_profit_pct, "enabled": sc.enabled, "params": sc.params}
-                for sc in cfg.strategies
-            ],
-            "limits": vars(cfg.limits),
-            "alerts": alert_notes,
+            "market": market,
+            "strategies": [asdict(sc) for sc in cfg.strategies],
+            "limits": asdict(cfg.limits),
+            "alerts": rt.alert_notes,
             "server_time": now.isoformat(),
         }
 
     @app.get("/api/account")
     def account() -> dict[str, Any]:
+        broker = need_broker()
+
         def load():
             snap = _broker_call(broker.snapshot)
             stops = _broker_call(broker.symbols_with_stop)
             return snap, stops
 
         snap, stops = cache.get("account", load)
-        problems = find_unmanaged_positions(snap.positions, stops, owners)
+        own = owners()
+        problems = find_unmanaged_positions(snap.positions, stops, own)
         positions = []
         for p in sorted(snap.positions.values(), key=lambda p: -abs(p.market_value)):
             price = p.market_value / p.qty if p.qty else 0.0
@@ -111,25 +270,28 @@ def create_app(cfg: Config, broker, market_data, journal: Journal, alert_notes: 
                 "pct_of_equity": p.market_value / snap.equity * 100 if snap.equity else 0,
                 "avg_entry_price": p.avg_entry_price, "price": price,
                 "unrealized_pct": (price / p.avg_entry_price - 1) * 100 if p.avg_entry_price else None,
-                "has_stop": p.symbol in stops, "owner": owners.get(p.symbol),
+                "has_stop": p.symbol in stops, "owner": own.get(p.symbol),
                 "issues": problems.get(p.symbol, []),
             })
         return {
             "equity": snap.equity, "cash": snap.cash, "day_start_equity": snap.day_start_equity,
-            "day_pnl_pct": snap.day_pnl_pct, "trades_today": snap.trades_today,
+            "day_pnl_pct": (snap.equity / snap.day_start_equity - 1) * 100 if snap.day_start_equity else 0,
+            "trades_today": snap.trades_today,
             "exposure_pct": snap.exposure / snap.equity * 100 if snap.equity else 0,
             "positions": positions,
         }
 
     @app.get("/api/performance")
     def performance(period: str = Query("1M", pattern="^(1M|3M|1A)$")) -> dict[str, Any]:
+        broker = need_broker()
+
         def load():
             equity = _broker_call(lambda: broker.portfolio_history(period))
             bench: list[tuple[int, float]] = []
-            if equity:
+            if equity and rt.market_data is not None:
                 start = datetime.fromtimestamp(equity[0][0], UTC) - timedelta(days=5)
                 try:
-                    df = market_data.bars(BENCHMARK, "1Day", start)
+                    df = rt.market_data.bars(BENCHMARK, "1Day", start)
                     by_day = {ts.date(): float(c) for ts, c in df["close"].items()}
                     for t, _ in equity:
                         day = datetime.fromtimestamp(t, UTC).date()
@@ -147,16 +309,16 @@ def create_app(cfg: Config, broker, market_data, journal: Journal, alert_notes: 
 
     @app.get("/api/orders")
     def orders(limit: int = Query(50, ge=1, le=500)) -> list[dict]:
-        return [dict(r) for r in journal.recent_orders(limit)]
+        return [dict(r) for r in rt.journal.recent_orders(limit)]
 
     @app.get("/api/events")
     def events(limit: int = Query(50, ge=1, le=500)) -> list[dict]:
-        rows = journal.db.execute("SELECT * FROM events ORDER BY id DESC LIMIT ?", (limit,))
+        rows = rt.journal.db.execute("SELECT * FROM events ORDER BY id DESC LIMIT ?", (limit,))
         return [dict(r) for r in rows]
 
     @app.get("/api/history")
     def history() -> dict[str, Any]:
-        rows = [dict(r) for r in journal.db.execute(
+        rows = [dict(r) for r in rt.journal.db.execute(
             "SELECT * FROM legacy_trades WHERE sell_date IS NOT NULL ORDER BY sell_date")]
         by_year: dict[str, dict] = defaultdict(lambda: {"trades": 0, "wins": 0, "profit": 0.0})
         for r in rows:
@@ -170,6 +332,160 @@ def create_app(cfg: Config, broker, market_data, journal: Journal, alert_notes: 
             "by_year": [{"year": k, **v} for k, v in sorted(by_year.items())],
             "recent": rows[-25:][::-1],
         }
+
+    @app.get("/api/settings")
+    def settings() -> dict[str, Any]:
+        return {
+            "config": config_to_dict(rt.settings),
+            "configured": rt.configured,
+            "catalog": list_strategies(),
+            "hard_limits": asdict(HARD_LIMITS),
+            "timeframes": list(TIMEFRAMES),
+            "feeds": list(FEEDS),
+        }
+
+    # --- writes ----------------------------------------------------------------------------------
+
+    @app.put("/api/settings", dependencies=[Depends(guard)])
+    def put_settings(body: SettingsBody) -> dict[str, Any]:
+        """Strategies, limits, alerts, data feed. Mode is never changed here: see /api/mode."""
+        current = rt.settings
+        raw = dict(body.config)
+        raw.update(mode=current.mode, dry_run=current.dry_run, data_dir=str(current.data_dir))
+        try:
+            new = parse_config(raw)
+        except ConfigError as e:
+            raise HTTPException(422, str(e)) from None
+        save(new)
+        rt.journal.event("settings", "settings saved from the dashboard")
+        return settings()
+
+    @app.post("/api/secrets", dependencies=[Depends(guard)])
+    def put_secret(body: SecretBody) -> dict[str, Any]:
+        if body.name not in SETTABLE:
+            raise HTTPException(422, f"{body.name} can't be set here.")
+        try:
+            where = set_secret(body.name, body.value.get_secret_value(), rt.dotenv_path)
+        except SecretsError as e:
+            raise HTTPException(422, str(e)) from None
+        rt.journal.event("settings", f"{body.name} saved to the {where}")
+        changed()
+        return setup()
+
+    @app.delete("/api/secrets/{name}", dependencies=[Depends(guard)])
+    def remove_secret(name: str) -> dict[str, Any]:
+        if name not in SETTABLE:
+            raise HTTPException(422, f"{name} can't be removed here.")
+        delete_secret(name, rt.dotenv_path)
+        rt.journal.event("settings", f"{name} removed")
+        changed()
+        return setup()
+
+    @app.post("/api/alpaca/test", dependencies=[Depends(guard)])
+    def alpaca_test(body: AlpacaTestBody) -> dict[str, Any]:
+        """Connect with the given keys (or the stored ones) and say which account they open."""
+        return test_keys(body.mode, body.key_id, body.secret_key)
+
+    @app.post("/api/mode", dependencies=[Depends(guard)])
+    def set_mode(body: ModeBody) -> dict[str, Any]:
+        """Dry run / paper / live. Live needs the typed phrase and live keys that open an active account."""
+        if not rt.configured:
+            raise HTTPException(409, "Finish setup first.")
+        cfg = rt.settings
+        if body.mode == "live":
+            if body.confirm.strip() != GO_LIVE_PHRASE:
+                raise HTTPException(422, f'Type "{GO_LIVE_PHRASE}" to switch to real money.')
+            info = test_keys("live")
+            if info.get("status") != "ACTIVE":
+                raise HTTPException(422, f"Your live account's status is {info.get('status')}, not ACTIVE.")
+            set_secret(LIVE_CONFIRM_VAR, "1", rt.dotenv_path)
+            new = replace(cfg, mode="live", dry_run=False)
+        else:
+            delete_secret(LIVE_CONFIRM_VAR, rt.dotenv_path)
+            new = replace(cfg, mode="paper", dry_run=body.mode == "dry-run")
+        before = describe_mode(cfg.mode, cfg.dry_run)
+        save(new)
+        after = describe_mode(new.mode, new.dry_run)
+        rt.journal.event("mode", f"{before} -> {after} (from the dashboard)",
+                         "warning" if new.mode == "live" else "info")
+        return status()
+
+    @app.post("/api/pause", dependencies=[Depends(guard)])
+    def pause(body: PauseBody) -> dict[str, Any]:
+        """The kill switch: no new buys while paused. Sells and stop-losses keep working."""
+        path = kill_file(rt.settings)
+        if body.paused:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(f"paused from the dashboard at {datetime.now(UTC).isoformat()}\n")
+        else:
+            path.unlink(missing_ok=True)
+        rt.journal.event("pause" if body.paused else "resume",
+                         "new buys paused from the dashboard" if body.paused else "resumed from the dashboard")
+        return status()
+
+    @app.post("/api/alerts/test", dependencies=[Depends(guard)])
+    def alerts_test() -> dict[str, Any]:
+        from taylortrader.alerts import Level
+        from taylortrader.app import build_alerts
+
+        alerts, notes = build_alerts(rt.settings)
+        if not alerts.push and not alerts.email:
+            raise HTTPException(422, "No alert channel is set up yet.")
+        alerts.send("TaylorTrader test alert", "If you can read this, alerts work.", Level.WARNING, email_copy=True)
+        return {"sent": True, "channels": notes}
+
+    @app.post("/api/service", dependencies=[Depends(guard)])
+    def service(body: ServiceBody) -> dict[str, Any]:
+        if not launchd.supported():
+            raise HTTPException(501, "Starting the background service from here works on macOS only. "
+                                     "Run `taylortrader run` in a terminal instead.")
+        if body.action != "stop" and not (rt.configured and rt.settings.enabled_strategies):
+            raise HTTPException(409, "Pick at least one strategy first.")
+        if body.action != "stop" and rt.broker is None:
+            raise HTTPException(409, rt.broker_error or "Connect Alpaca first.")
+        try:
+            {"start": lambda: launchd.start(project), "stop": launchd.stop, "restart": launchd.restart}[body.action]()
+        except RuntimeError as e:
+            raise HTTPException(500, str(e)) from None
+        rt.journal.event("service", f"background service: {body.action} (from the dashboard)")
+        return setup()
+
+    @app.post("/api/backtest", dependencies=[Depends(guard)])
+    def backtest_preview(body: BacktestBody) -> dict[str, Any]:
+        """One strategy on history (Alpaca SIP, every exchange), next to buy-and-hold."""
+        from taylortrader import backtest
+        from taylortrader.data import MarketData
+        from taylortrader.secrets import load_alpaca_credentials
+        from taylortrader.strategies import get_strategy
+
+        if body.timeframe not in TIMEFRAMES:
+            raise HTTPException(422, f"timeframe must be one of {TIMEFRAMES}")
+        days = min(body.days, 60) if body.timeframe == "1Min" else body.days
+        try:
+            strat = get_strategy(body.strategy, body.params)
+            creds = load_alpaca_credentials("paper", rt.dotenv_path)  # history only; never live keys
+        except (ValueError, SecretsError) as e:
+            raise HTTPException(422, str(e)) from None
+        md = MarketData(creds, rt.settings.data_dir / "cache", feed="sip")
+        symbol = body.symbol.strip().upper()
+        df = _broker_call(lambda: md.bars(symbol, body.timeframe, datetime.now(UTC) - timedelta(days=days)))
+        if len(df) <= strat.warmup + 2:
+            raise HTTPException(422, f"Not enough {body.timeframe} history for {symbol} ({len(df)} bars).")
+        try:
+            r = backtest.run(df, strat, allocation_pct=body.allocation_pct, stop_loss_pct=body.stop_loss_pct,
+                             take_profit_pct=body.take_profit_pct)
+        except ValueError as e:
+            raise HTTPException(422, str(e)) from None
+        closes = df["close"].loc[r.equity.index]
+        return {
+            "summary": r.summary(),
+            "symbol": symbol,
+            "timeframe": body.timeframe,
+            "equity": _downsample(r.equity / r.equity.iloc[0] * 100),
+            "buy_hold": _downsample(closes / closes.iloc[0] * 100),
+        }
+
+    # --- the page --------------------------------------------------------------------------------
 
     @app.exception_handler(404)
     async def not_found(request, exc):

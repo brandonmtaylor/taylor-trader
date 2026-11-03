@@ -89,14 +89,16 @@ def get_secret(name: str, dotenv_path: Path | None = None) -> SecretStr | None:
     return SecretStr(value)
 
 
-def live_trading_confirmed() -> bool:
-    return bool(os.environ.get(LIVE_CONFIRM_VAR, "").strip())
+def live_trading_confirmed(dotenv_path: Path | None = None) -> bool:
+    """Live needs this flag in the environment, .env or Keychain. The dashboard sets it only
+    after the typed go-live confirmation, and removes it when you switch back to paper."""
+    return get_secret(LIVE_CONFIRM_VAR, dotenv_path) is not None
 
 
 def load_alpaca_credentials(mode: str, dotenv_path: Path | None = None) -> AlpacaCredentials:
     if mode not in ("paper", "live"):
         raise SecretsError(f"mode must be 'paper' or 'live', got {mode!r}")
-    if mode == "live" and not live_trading_confirmed():
+    if mode == "live" and not live_trading_confirmed(dotenv_path):
         raise SecretsError(
             f"Config says live, but {LIVE_CONFIRM_VAR} is not set. Live trading needs both, on purpose."
         )
@@ -110,3 +112,76 @@ def load_alpaca_credentials(mode: str, dotenv_path: Path | None = None) -> Alpac
             f"(security add-generic-password -s {KEYCHAIN_SERVICE} -a <NAME> -w)."
         )
     return AlpacaCredentials(key_id=key_id, secret_key=secret_key, paper=(mode == "paper"))
+
+
+# --- writing (used by the dashboard) -------------------------------------------------------------
+
+# The only names the dashboard may write. Anything else is refused.
+SETTABLE = (
+    "ALPACA_PAPER_KEY_ID", "ALPACA_PAPER_SECRET_KEY", "ALPACA_LIVE_KEY_ID", "ALPACA_LIVE_SECRET_KEY",
+    "NTFY_TOPIC", "EMAIL_PASSWORD", "HEALTHCHECK_URL",
+)
+
+
+def keychain_available() -> bool:
+    return shutil.which("security") is not None
+
+
+def _check_value(name: str, value: str) -> str:
+    if name not in (*SETTABLE, LIVE_CONFIRM_VAR):
+        raise SecretsError(f"{name} isn't a setting TaylorTrader stores")
+    value = value.strip()
+    if not value or len(value) > 512 or any(ch in value for ch in "\r\n\0"):
+        raise SecretsError(f"{name}: value is empty, too long, or has line breaks")
+    return value
+
+
+def _write_dotenv(path: Path, name: str, value: str | None) -> None:
+    lines = path.read_text().splitlines() if path.is_file() else []
+    lines = [ln for ln in lines if ln.partition("=")[0].strip() != name]
+    if value is not None:
+        lines.append(f"{name}={value}")
+    path.write_text("\n".join(lines) + "\n")
+    path.chmod(0o600)
+
+
+def set_secret(name: str, value: str, dotenv_path: Path | None = None) -> str:
+    """Store a secret in the Keychain (macOS) or .env (elsewhere, mode 600). Returns where."""
+    value = _check_value(name, value)
+    if keychain_available():
+        # The value is passed as an argument, so it's briefly visible to other processes run by
+        # this same user. Acceptable on a single-user Mac; the Keychain is still where it lives.
+        r = subprocess.run(
+            ["security", "add-generic-password", "-U", "-s", KEYCHAIN_SERVICE, "-a", name, "-w", value],
+            capture_output=True, timeout=10, check=False,
+        )
+        if r.returncode != 0:
+            raise SecretsError(f"Keychain refused to store {name} (exit {r.returncode})")
+        where = "Keychain"
+    else:
+        _write_dotenv(dotenv_path or Path(".env"), name, value)
+        where = ".env"
+    _LOADED_SECRETS.add(value)
+    return where
+
+
+def delete_secret(name: str, dotenv_path: Path | None = None) -> None:
+    if name not in (*SETTABLE, LIVE_CONFIRM_VAR):
+        raise SecretsError(f"{name} isn't a setting TaylorTrader stores")
+    if keychain_available():
+        subprocess.run(["security", "delete-generic-password", "-s", KEYCHAIN_SERVICE, "-a", name],
+                       capture_output=True, timeout=10, check=False)
+    path = dotenv_path or Path(".env")
+    if path.is_file() and name in _read_dotenv(path):
+        _write_dotenv(path, name, None)
+
+
+def secret_source(name: str, dotenv_path: Path | None = None) -> str | None:
+    """Where a secret is set ("environment", ".env", "Keychain"), or None. Never the value."""
+    if os.environ.get(name):
+        return "environment"
+    if _read_dotenv(dotenv_path or Path(".env")).get(name):
+        return ".env"
+    if _read_keychain(name):
+        return "Keychain"
+    return None

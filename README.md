@@ -17,60 +17,66 @@ An open-source autonomous trading bot for [Alpaca](https://alpaca.markets), buil
 - **Secrets stay secret.** Keys come from the environment, a git-ignored `.env`, or the macOS Keychain;
   they're masked in logs and tracebacks, config files that contain secret-looking keys are rejected,
   and a pre-commit hook scans for credentials.
-- **Live trading needs two switches:** `mode = "live"` in config *and* `TAYLORTRADER_ALLOW_LIVE` set.
+- **Live trading needs two things:** live keys that open an active account, and typing `GO LIVE`
+  in the dashboard (which sets `TAYLORTRADER_ALLOW_LIVE`; switching back to paper removes it).
 
 ## Quick start
 ```bash
 uv sync
-cp config.example.toml config.toml        # pick strategies here; no secrets in this file
-security add-generic-password -s taylortrader -a ALPACA_PAPER_KEY_ID -w
-security add-generic-password -s taylortrader -a ALPACA_PAPER_SECRET_KEY -w
-git config core.hooksPath scripts/githooks  # secret scan before every commit
+cd dashboard && npm install && npm run build && cd ..   # once, and after UI changes
+uv run taylortrader                                     # opens the dashboard and walks you through setup
+```
+Setup takes about ten minutes: connect your Alpaca **paper** keys (tested, then saved to the macOS
+Keychain, or a mode-600 `.env` elsewhere), pick a strategy and backtest it, check the safety
+limits, optionally add phone/email alerts, and start the background service in **dry run**.
+Then switch Dry run / Paper / Live from the bar at the top of the page.
 
-uv run taylortrader doctor                 # config, credentials (found/missing), secret scan
+The dashboard listens on 127.0.0.1 only. Every change it makes needs a custom header and a
+same-origin request, so another website open in your browser can't change your settings.
+Keys go in and are never shown again: the page only says where each one is stored.
+
+## Command line
+Everything the dashboard does also works from a terminal:
+```bash
+git config core.hooksPath scripts/githooks  # secret scan before every commit
+uv run taylortrader doctor                 # settings, credentials (found/missing), secret scan
 uv run taylortrader strategies             # what you can pick
 uv run taylortrader backtest VRT --strategy macd_rsi --timeframe 5Min --days 365
 uv run taylortrader backtest VRT --all --timeframe 1Hour --days 1000
 uv run taylortrader account                # read-only: positions, stops, unmanaged positions
-```
-
-## Running it
-```bash
-security add-generic-password -s taylortrader -a NTFY_TOPIC -w   # a long random topic name; it's a secret
 uv run taylortrader alerts-test            # push + email test
-uv run taylortrader run --dry-run --once   # one tick: decides and alerts, places no orders
-uv run taylortrader install-service --dry-run   # launchd agents; prints the start/stop commands
-uv run taylortrader kill on                # no new positions; exits and stops keep working
+uv run taylortrader run --dry-run --once   # one check: decides and alerts, places no orders
+uv run taylortrader install-service        # launchd agents (the dashboard can start/stop them)
+uv run taylortrader kill on                # pause new buys; sells and stops keep working
 uv run taylortrader journal                # recent orders, heartbeat, imported history
 ```
-The service writes a heartbeat every tick. A separate watchdog job (every 10 minutes) pushes a
-critical alert if the heartbeat goes stale, and the daily summary after the close is your "still
-alive" message. Optional: set `HEALTHCHECK_URL` (healthchecks.io) to be alerted even if the whole
-machine is off.
+Settings live in `config.toml` (no secrets; `config.example.toml` explains each one). The dashboard
+writes it after validating, keeping the previous version as `config.toml.bak`; editing by hand
+is fine too. The service notices a saved change on its next check and restarts itself with it. A
+file with a mistake in it is reported and ignored, so the service keeps running on the old settings.
 
-What the service does on its own:
+## What the service does on its own
+- Writes a heartbeat every check. A watchdog job (every 10 minutes) alerts if it goes stale, and
+  the daily summary after the close is your "still alive" message. Optional `HEALTHCHECK_URL`
+  (healthchecks.io) alerts you even if the whole machine is off.
 - Recreates a missing stop on any position a strategy owns; if the stop level is already breached, exits.
 - Alerts (once a day) about positions no strategy owns, and never touches them.
 - Reports when a broker-side stop closes a position.
-- After 5 errors in a row it stops with a critical alert, and launchd restarts it.
+- Keeps checking other symbols when one fails. After 5 failed checks in a row it stops with a
+  critical alert, and launchd restarts it.
 
-## Dashboard
-A read-only dashboard on this computer only (it binds to 127.0.0.1 and rejects other hosts):
-```bash
-cd dashboard && npm install && npm run build && cd ..   # once, and after UI changes
-uv run taylortrader dashboard                            # http://127.0.0.1:8787
-```
-It shows whether the service is alive (a heartbeat trace that flatlines when it stops), whether
-you're in paper or live mode, every position with its broker-side stop and owning strategy, the
-order journal with reasons, account growth vs. SPY, and the guardrail limits. Controls (kill
-switch, settings) come later. For UI work: `uv run taylortrader dashboard` plus `npm run dev` in
-`dashboard/` (Vite proxies `/api` to it).
+## Price data
+`feed = "yahoo"` (default): every exchange, current, free, unofficial; the service switches to
+Alpaca IEX on its own if Yahoo fails or falls behind. `"iex"`: Alpaca, real time, one exchange.
+`"sip"`: Alpaca, every exchange, 15 minutes delayed on the free plan. Backtests always use SIP.
 
-## Picking strategies
-Add a `[[strategies]]` block per strategy in `config.toml`: name, symbols, timeframe, allocation,
-stop-loss, and optional parameter overrides. Run `taylortrader strategies` for the list and defaults.
+## Strategies
 Built-ins are ported from the original bot: `macd_rsi`, `macd`, `ma_20`, `rsi_14`, `ma_20_rsi`,
-`ma_200_rsi`, `ma_20_over_200_rsi`, `chaikin`, `pullback`.
+`ma_200_rsi`, `ma_20_over_200_rsi`, `chaikin`, `pullback`. Run as many as you like; each symbol
+belongs to one strategy so it's always clear who manages a position.
+
+For UI work: `uv run taylortrader dashboard --no-open` plus `TAYLORTRADER_DEV=1` and `npm run dev`
+in `dashboard/` (Vite proxies `/api` to it).
 
 ## License
 Apache-2.0

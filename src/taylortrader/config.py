@@ -2,15 +2,17 @@
 
 from __future__ import annotations
 
+import math
 import re
 import tomllib
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
 from guardrails import Limits
 
 TIMEFRAMES = ("1Min", "5Min", "15Min", "1Hour", "1Day")
+FEEDS = ("yahoo", "iex", "sip")
 # Setting names that look like they hold a secret value ("api_key", "secret_key", "ntfy_topic",
 # "password", "healthcheck_url"). Those belong in the environment, .env or the Keychain.
 _SECRET_NAME = re.compile(r"(?i)(secret|password|passwd|token|(^|_)key$|(^|_)key_id$|api_key|topic$|url$)")
@@ -52,6 +54,7 @@ class ServiceConfig:
 @dataclass(frozen=True)
 class Config:
     mode: str = "paper"
+    dry_run: bool = False  # decide and alert, but place no orders
     data_dir: Path = Path("var")
     feed: str = "iex"
     strategies: list[StrategyConfig] = field(default_factory=list)
@@ -76,45 +79,86 @@ def _reject_secrets(table: dict[str, Any], where: str = "") -> None:
 
 
 def load_config(path: Path | str = "config.toml") -> Config:
-    from taylortrader.strategies import get_strategy  # avoid import cycle
-
     path = Path(path)
     if not path.is_file():
-        raise ConfigError(f"{path} not found. Copy config.example.toml to {path.name} and edit it.")
-    raw = tomllib.loads(path.read_text())
+        raise ConfigError(f"{path} not found. Run `taylortrader dashboard` to set up, or copy config.example.toml.")
+    try:
+        raw = tomllib.loads(path.read_text())
+    except tomllib.TOMLDecodeError as e:
+        raise ConfigError(f"{path}: {e}") from None
+    return parse_config(raw)
+
+
+_SYMBOL = re.compile(r"^[A-Z][A-Z0-9.\-/]{0,14}$")
+
+
+def parse_config(raw: dict[str, Any]) -> Config:
+    """Validate a TOML-shaped dict (from the file, or from the dashboard) into a Config."""
+    from guardrails.limits import LimitsError
+    from taylortrader.strategies import get_strategy  # avoid import cycle
+
     _reject_secrets(raw)
+    known = {"mode", "dry_run", "data_dir", "feed", "strategies", "guardrails", "alerts", "service"}
+    unknown = set(raw) - known
+    if unknown:
+        raise ConfigError(f"unknown setting(s): {sorted(unknown)}")
 
     mode = raw.get("mode", "paper")
     if mode not in ("paper", "live"):
         raise ConfigError(f"mode must be 'paper' or 'live', got {mode!r}")
+    dry_run = raw.get("dry_run", False)
+    if not isinstance(dry_run, bool):
+        raise ConfigError("dry_run must be true or false")
     feed = raw.get("feed", "iex")
-    if feed not in ("iex", "sip", "yahoo"):
-        raise ConfigError(f"feed must be 'iex', 'sip' or 'yahoo', got {feed!r}")
+    if feed not in FEEDS:
+        raise ConfigError(f"feed must be one of {FEEDS}, got {feed!r}")
+    try:
+        limits = Limits.from_config(raw.get("guardrails"))
+    except LimitsError as e:
+        raise ConfigError(f"guardrails: {e}") from None
 
     strategies = []
     for i, block in enumerate(raw.get("strategies", [])):
+        label = f"strategy {i + 1} ({block.get('name', '?')})"
         try:
             sc = StrategyConfig(**block)
         except TypeError as e:
-            raise ConfigError(f"strategies[{i}]: {e}") from None
+            raise ConfigError(f"{label}: {e}") from None
+        sc = replace(sc, symbols=[str(x).strip().upper() for x in sc.symbols if str(x).strip()])
         if sc.timeframe not in TIMEFRAMES:
-            raise ConfigError(f"strategies[{i}] ({sc.name}): timeframe must be one of {TIMEFRAMES}")
+            raise ConfigError(f"{label}: timeframe must be one of {TIMEFRAMES}")
         if not sc.symbols:
-            raise ConfigError(f"strategies[{i}] ({sc.name}): needs at least one symbol")
-        get_strategy(sc.name, sc.params)  # validates name and params now, not at 9:30am
+            raise ConfigError(f"{label}: needs at least one symbol")
+        bad = [x for x in sc.symbols if not _SYMBOL.match(x)]
+        if bad:
+            raise ConfigError(f"{label}: {', '.join(bad)} doesn't look like a ticker symbol")
+        if len(set(sc.symbols)) != len(sc.symbols):
+            raise ConfigError(f"{label}: a symbol is listed twice")
+        if not 0 < sc.allocation_pct <= limits.max_position_pct:
+            raise ConfigError(f"{label}: position size must be between 0 and {limits.max_position_pct}% "
+                              "(the one-position guardrail)")
+        if not 0 < sc.stop_loss_pct <= limits.max_stop_loss_pct:
+            raise ConfigError(f"{label}: stop-loss must be between 0 and {limits.max_stop_loss_pct}% "
+                              "(the stop-width guardrail)")
+        if sc.take_profit_pct < 0:
+            raise ConfigError(f"{label}: take-profit can't be negative (0 turns it off)")
+        try:
+            get_strategy(sc.name, sc.params)  # validates name and params now, not at 9:30am
+        except ValueError as e:
+            raise ConfigError(f"{label}: {e}") from None
         strategies.append(sc)
 
     owners: dict[str, str] = {}
-    for sc in strategies:
+    for i, sc in enumerate(strategies):
         if not sc.enabled:
             continue
         for sym in sc.symbols:
             if sym in owners:
                 raise ConfigError(
-                    f"{sym} is used by both {owners[sym]} and {sc.name}. One strategy owns each symbol, "
-                    "so it's always clear who manages a position."
+                    f"{sym} is used by both {owners[sym]} and strategy {i + 1} ({sc.name}). One strategy owns "
+                    "each symbol, so it's always clear who manages a position."
                 )
-            owners[sym] = sc.name
+            owners[sym] = f"strategy {i + 1} ({sc.name})"
 
     def _section(cls, name):
         try:
@@ -124,10 +168,81 @@ def load_config(path: Path | str = "config.toml") -> Config:
 
     return Config(
         mode=mode,
+        dry_run=dry_run,
         data_dir=Path(raw.get("data_dir", "var")),
         feed=feed,
         strategies=strategies,
-        limits=Limits.from_config(raw.get("guardrails")),
+        limits=limits,
         alerts=_section(AlertsConfig, "alerts"),
         service=_section(ServiceConfig, "service"),
     )
+
+
+# --- writing ------------------------------------------------------------------------------------
+
+HEADER = """\
+# TaylorTrader settings. The dashboard writes this file; editing it by hand is fine too
+# (config.example.toml explains every setting). No secrets go here: keys and passwords
+# live in the Keychain or .env. The previous version is kept as {name}.bak.
+"""
+
+
+def config_to_dict(cfg: Config) -> dict[str, Any]:
+    """The TOML-shaped dict for a Config (round-trips through parse_config)."""
+    return {
+        "mode": cfg.mode,
+        "dry_run": cfg.dry_run,
+        "data_dir": str(cfg.data_dir),
+        "feed": cfg.feed,
+        "strategies": [asdict(sc) for sc in cfg.strategies],
+        "guardrails": asdict(cfg.limits),
+        "alerts": asdict(cfg.alerts),
+        "service": asdict(cfg.service),
+    }
+
+
+def _toml_value(v: Any) -> str:
+    if isinstance(v, bool):
+        return "true" if v else "false"
+    if isinstance(v, int | float):
+        if not math.isfinite(v):
+            raise ConfigError("numbers must be finite")
+        return repr(v)
+    if isinstance(v, str):
+        return '"' + v.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n") + '"'
+    if isinstance(v, list):
+        return "[" + ", ".join(_toml_value(x) for x in v) + "]"
+    raise ConfigError(f"can't write {type(v).__name__} to config")
+
+
+def _toml_table(d: dict[str, Any]) -> list[str]:
+    return [f"{k} = {_toml_value(v)}" for k, v in d.items() if not isinstance(v, dict)]
+
+
+def render_toml(data: dict[str, Any], name: str = "config.toml") -> str:
+    lines = [HEADER.format(name=name)]
+    lines += _toml_table({k: v for k, v in data.items() if k not in ("strategies",)})
+    for sc in data.get("strategies", []):
+        lines += ["", "[[strategies]]", *_toml_table({k: v for k, v in sc.items() if k != "params"})]
+        if sc.get("params"):
+            lines += ["[strategies.params]", *_toml_table(sc["params"])]
+    for section in ("guardrails", "alerts", "service"):
+        if data.get(section):
+            lines += ["", f"[{section}]", *_toml_table(data[section])]
+    return "\n".join(lines) + "\n"
+
+
+def save_config(cfg_or_raw: Config | dict[str, Any], path: Path | str = "config.toml") -> Config:
+    """Validate, then write atomically. The previous file is kept as <name>.bak."""
+    raw = config_to_dict(cfg_or_raw) if isinstance(cfg_or_raw, Config) else cfg_or_raw
+    cfg = parse_config(raw)  # raises ConfigError before anything is written
+    path = Path(path)
+    text = render_toml(config_to_dict(cfg), path.name)
+    if parse_config(tomllib.loads(text)) != cfg:  # the writer must round-trip exactly
+        raise ConfigError("internal error: settings didn't survive being written; nothing was saved")
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(text)
+    if path.exists():
+        path.replace(path.with_name(path.name + ".bak"))
+    tmp.replace(path)
+    return cfg

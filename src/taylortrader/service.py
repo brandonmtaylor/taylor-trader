@@ -54,6 +54,14 @@ def completed_bars(df: pd.DataFrame, timeframe: str, now: datetime) -> pd.DataFr
     return df if last + BAR[timeframe] <= now else df.iloc[:-1]
 
 
+class RestartRequested(Exception):  # a signal to start over, not an error
+    """Settings changed on disk; the process should start again with them."""
+
+
+def describe_mode(mode: str, dry_run: bool) -> str:
+    return f"dry run ({mode})" if dry_run else ("LIVE" if mode == "live" else "paper")
+
+
 @dataclass
 class Service:
     cfg: Config
@@ -63,6 +71,7 @@ class Service:
     alerts: Alerts
     dry_run: bool = False
     healthcheck_url: str | None = None
+    config_path: Path | None = None  # watched: a change restarts the service with the new settings
     now: callable = field(default=lambda: datetime.now(UTC))
     sleep: callable = field(default=time.sleep)
 
@@ -80,6 +89,7 @@ class Service:
         self.open_note_date = None
         self.last_ping = 0.0
         self.unmanaged_note_date: dict[str, object] = {}
+        self.config_mtime = self._mtime()
 
     # --- lifecycle -----------------------------------------------------------------------------
 
@@ -91,8 +101,11 @@ class Service:
         try:
             while True:
                 try:
+                    self.check_config()
                     wait = self.tick()
                     self.errors = 0
+                except RestartRequested:
+                    raise  # not an error: handled below, outside the error count
                 except Exception as e:
                     self.errors += 1
                     log.exception("loop error %d/%d", self.errors, MAX_CONSECUTIVE_ERRORS)
@@ -105,6 +118,11 @@ class Service:
                                      key=f"err:{type(e).__name__}")
                     wait = min(60 * self.errors, 300)
                 self.sleep(wait)
+        except RestartRequested as r:
+            self.journal.event("restart", str(r))
+            self.alerts.send("TaylorTrader settings changed", f"{r}\nRestarting with the new settings.",
+                             Level.CRITICAL if "LIVE" in str(r) else Level.INFO, key="restart")
+            raise
         except KeyboardInterrupt:
             self.journal.event("stop", "stopped by user")
             self.alerts.send("TaylorTrader stopped", "Stopped by user (Ctrl-C or launchctl).", key="stop")
@@ -144,6 +162,39 @@ class Service:
         return float(self.cfg.service.loop_seconds)
 
     # --- pieces --------------------------------------------------------------------------------
+
+    def _mtime(self) -> float | None:
+        try:
+            return self.config_path.stat().st_mtime if self.config_path else None
+        except OSError:
+            return None
+
+    def check_config(self) -> None:
+        """Restart when the settings file changes to something valid and different.
+
+        An invalid file (a typo while editing by hand) is reported and ignored: the service
+        keeps running on the settings it started with.
+        """
+        from taylortrader.config import ConfigError, load_config
+
+        mtime = self._mtime()
+        if mtime is None or mtime == self.config_mtime:
+            return
+        self.config_mtime = mtime
+        try:
+            new = load_config(self.config_path)
+        except ConfigError as e:
+            self.journal.event("error", f"settings file has a problem, still using the old settings: {e}", "error")
+            self.alerts.send("TaylorTrader settings not applied", f"{e}\nStill running on the previous settings.",
+                             Level.WARNING, key="badconfig")
+            return
+        if new == self.cfg:
+            return
+        old_mode = describe_mode(self.cfg.mode, self.dry_run)
+        new_mode = describe_mode(new.mode, new.dry_run)
+        what = f"mode {old_mode} -> {new_mode}" if old_mode != new_mode else "strategies or limits updated"
+        raise RestartRequested(what)
+
 
     def _check_kill_switch(self) -> None:
         on = kill_file(self.cfg).exists()
