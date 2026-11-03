@@ -33,3 +33,6 @@ node_modules/
 .DS_Store
 .idea/
 .vscode/
+
+# Private build notes live outside the repo (~/Projects/taylor-trader-notes)
+docs/journal/
