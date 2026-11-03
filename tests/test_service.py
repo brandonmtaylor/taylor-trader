@@ -384,3 +384,33 @@ def test_settings_change_restarts_through_the_real_loop(svc, tmp_path):
     kinds = [r[0] for r in svc.journal.db.execute("SELECT kind FROM events")]
     assert "restart" in kinds and "error" not in kinds
     assert "TaylorTrader error" not in svc.rec.titles()
+
+
+def test_ai_buy_goes_through_guardrails_like_any_strategy(tmp_path):
+    from taylortrader import llm
+    from taylortrader.strategies.ai import AIContext
+
+    class Model:
+        def ask(self, system, user, allowed):
+            return llm.validate({"action": "buy", "confidence": 0.9, "summary": "Looks good.",
+                                 "pros": [], "cons": []}, allowed)
+
+    cfg = Config(data_dir=tmp_path, strategies=[
+        StrategyConfig(name="ai", symbols=["VRT"], timeframe="5Min", allocation_pct=20, stop_loss_pct=10)],
+        limits=Limits(), service=ServiceConfig())
+    j = Journal(tmp_path / "j.db")
+    rec = Recorder()
+    s = Service(cfg, FakeBroker(), FakeData(), j, Alerts(push=[rec], email=[rec]),
+                ai=AIContext(journal=j, llm=Model()), now=lambda: NOW, sleep=lambda s: None)
+    s.tick()
+    intent = s.broker.entries[0]
+    assert intent.symbol == "VRT" and intent.stop_loss_price is not None  # stop attached as always
+    assert "AI buy (90% sure)" in j.recent_orders()[0]["reason"]
+
+
+def test_two_blocks_of_one_strategy_keep_their_own_settings(svc):
+    cfg = dataclasses.replace(svc.cfg, strategies=[
+        StrategyConfig(name="rsi_14", symbols=["AAA"], params={"rsi_buy": 20}),
+        StrategyConfig(name="rsi_14", symbols=["BBB"], params={"rsi_buy": 45})])
+    s = Service(cfg, FakeBroker(), FakeData(), svc.journal, svc.alerts, now=lambda: NOW)
+    assert s.strategy_for["AAA"].p.rsi_buy == 20 and s.strategy_for["BBB"].p.rsi_buy == 45

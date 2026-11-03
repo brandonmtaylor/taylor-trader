@@ -1,7 +1,7 @@
 import { useState } from "react";
-import type { Account, EventRow, History, OrderRow, Performance, Status } from "../api";
+import type { Account, AIDecision, EventRow, History, OrderRow, Performance, Status } from "../api";
 import { EquityChart } from "../components/EquityChart";
-import { Events, Orders, PastResults, Positions, Strategies, Vitals } from "../components/Panels";
+import { AIDecisions, Events, Orders, PastResults, Positions, Strategies, Vitals } from "../components/Panels";
 import { usePoll } from "../usePoll";
 
 export function Overview({ status }: { status: Status | null }) {
@@ -11,6 +11,7 @@ export function Overview({ status }: { status: Status | null }) {
   const orders = usePoll<OrderRow[]>("/api/orders?limit=40", 15_000);
   const events = usePoll<EventRow[]>("/api/events?limit=40", 15_000);
   const history = usePoll<History>("/api/history", 3_600_000);
+  const ai = usePoll<AIDecision[]>("/api/ai/decisions?limit=30", 30_000);
 
   return (
     <main className="layout">
@@ -21,6 +22,7 @@ export function Overview({ status }: { status: Status | null }) {
         <Orders orders={orders.data} error={orders.error} />
       </div>
       <aside className="col col--side">
+        <AIDecisions rows={ai.data} error={ai.error} />
         <Events events={events.data} />
         <Strategies status={status} />
         <PastResults history={history.data} />

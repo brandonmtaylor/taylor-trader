@@ -50,7 +50,7 @@ export function SetupPage({ store, setup, onSetup }: { store: SettingsStore; set
         <Section id="s-strategy" step={2} done={strategyDone} title="Pick a strategy"
           sub="Choose how it decides, which stocks it watches, and how much each buy uses. Run a backtest to see how it would have done.">
           <StrategyEditor value={strategy} onChange={setStrategy} catalog={resp.catalog}
-            limits={resp.config.guardrails} timeframes={resp.timeframes} index={0} />
+            limits={resp.config.guardrails} timeframes={resp.timeframes} aiDailyLimit={resp.config.ai.max_calls_per_day} index={0} />
           <div className="saverow">
             <button type="button" className="btn btn--primary" onClick={saveStrategy}
               disabled={act.busy || strategy.symbols.length === 0}>

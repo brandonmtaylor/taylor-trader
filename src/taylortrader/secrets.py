@@ -119,7 +119,7 @@ def load_alpaca_credentials(mode: str, dotenv_path: Path | None = None) -> Alpac
 # The only names the dashboard may write. Anything else is refused.
 SETTABLE = (
     "ALPACA_PAPER_KEY_ID", "ALPACA_PAPER_SECRET_KEY", "ALPACA_LIVE_KEY_ID", "ALPACA_LIVE_SECRET_KEY",
-    "NTFY_TOPIC", "EMAIL_PASSWORD", "HEALTHCHECK_URL",
+    "NTFY_TOPIC", "EMAIL_PASSWORD", "HEALTHCHECK_URL", "ANTHROPIC_API_KEY", "OPENAI_API_KEY",
 )
 
 

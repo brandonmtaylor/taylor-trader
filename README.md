@@ -75,6 +75,23 @@ Built-ins are ported from the original bot: `macd_rsi`, `macd`, `ma_20`, `rsi_14
 `ma_200_rsi`, `ma_20_over_200_rsi`, `chaikin`, `pullback`. Run as many as you like; each symbol
 belongs to one strategy so it's always clear who manages a position.
 
+## AI strategy (experimental)
+`ai` asks a language model whether to buy, sell or hold. It works with Claude (Anthropic SDK,
+structured outputs, so answers always match the decision format) or any OpenAI-compatible API:
+OpenAI, OpenRouter, Groq, or a free local model through Ollama or LM Studio. Set it up under
+Settings → AI model, then add an `ai` strategy with plain-English instructions.
+
+- Each question includes your instructions, recent bars, indicators, and (optionally) the last
+  3 days of Alpaca news, which the model is told to treat as information, never instructions.
+- An optional rule (`rsi < 40 and close > ma_200`) is checked for free before each call. Rules
+  are parsed, never evaluated as code.
+- It only proposes. Position size, the stop-loss, and every guardrail apply as usual. An error,
+  an off-menu answer, or confidence under your threshold means hold.
+- A daily call limit caps cost; every decision, with pros, cons and confidence, is shown on the
+  overview.
+- It can't be backtested honestly (the model has read what happened next), so the backtester
+  refuses it. Try it in dry run, then on paper.
+
 For UI work: `uv run taylortrader dashboard --no-open` plus `TAYLORTRADER_DEV=1` and `npm run dev`
 in `dashboard/` (Vite proxies `/api` to it).
 

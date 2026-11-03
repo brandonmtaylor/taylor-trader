@@ -1,6 +1,7 @@
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { send, type BacktestResult, type CatalogItem, type Limits, type Point, type StrategyCfg } from "../api";
 import { day, pct } from "../format";
+import { AIFields } from "./AIFields";
 import { Labeled, NoticeLine, NumberInput, Toggle, useAction } from "./forms";
 
 const TF_LABEL: Record<string, string> = {
@@ -18,7 +19,7 @@ export function parseSymbols(text: string): string[] {
   return text.split(/[\s,]+/).map((s) => s.trim().toUpperCase()).filter(Boolean);
 }
 
-export function StrategyEditor({ value, onChange, onRemove, catalog, limits, timeframes, index }: {
+export function StrategyEditor({ value, onChange, onRemove, catalog, limits, timeframes, index, aiDailyLimit }: {
   value: StrategyCfg;
   onChange: (v: StrategyCfg) => void;
   onRemove?: () => void;
@@ -26,7 +27,9 @@ export function StrategyEditor({ value, onChange, onRemove, catalog, limits, tim
   limits: Limits;
   timeframes: string[];
   index: number;
+  aiDailyLimit?: number;
 }) {
+  const isAI = value.name === "ai";
   const entry = catalog.find((c) => c.name === value.name);
   const [symText, setSymText] = useState(value.symbols.join(", "));
   const lastSyms = useRef(value.symbols.join(","));
@@ -44,8 +47,13 @@ export function StrategyEditor({ value, onChange, onRemove, catalog, limits, tim
       <div className="strat__head">
         <Labeled label="Strategy" render={(id) => (
           <select id={id} className="input" value={value.name}
-            onChange={(e) => set({ name: e.target.value, params: {} })}>
-            {catalog.map((c) => <option key={c.name} value={c.name}>{c.name}</option>)}
+            onChange={(e) => {
+              const name = e.target.value;
+              // AI calls cost money and take seconds: start it on hourly bars instead of minutes.
+              const slow = name === "ai" && ["1Min", "5Min", "15Min"].includes(value.timeframe);
+              set({ name, params: {}, ...(slow ? { timeframe: "1Hour" } : {}) });
+            }}>
+            {catalog.map((c) => <option key={c.name} value={c.name}>{c.name === "ai" ? "ai (experimental)" : c.name}</option>)}
           </select>
         )} />
         <div className="strat__toggles">
@@ -81,7 +89,9 @@ export function StrategyEditor({ value, onChange, onRemove, catalog, limits, tim
         )} />
       </div>
 
-      {entry && Object.keys(entry.params).length > 0 && (
+      {isAI && <AIFields value={value} onChange={onChange} dailyLimit={aiDailyLimit} defaults={entry?.params ?? {}} />}
+
+      {!isAI && entry && Object.keys(entry.params).length > 0 && (
         <details className="params">
           <summary>Fine-tune <span className="params__count">{Object.keys(value.params).length} changed</span></summary>
           <div className="grid-fields">
@@ -111,7 +121,7 @@ export function StrategyEditor({ value, onChange, onRemove, catalog, limits, tim
         </details>
       )}
 
-      <BacktestPreview strategy={value} />
+      {entry?.backtestable !== false && <BacktestPreview strategy={value} />}
     </article>
   );
 }

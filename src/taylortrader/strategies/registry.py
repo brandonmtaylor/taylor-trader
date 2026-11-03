@@ -26,6 +26,7 @@ def list_strategies() -> list[dict[str, Any]]:
         {
             "name": cls.name,
             "description": cls.description,
+            "backtestable": cls.backtestable,
             "params": {f.name: f.default for f in fields(cls.Params)},
         }
         for cls in sorted(_REGISTRY.values(), key=lambda c: c.name)

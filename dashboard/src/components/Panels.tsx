@@ -1,4 +1,4 @@
-import type { Account, EventRow, History, OrderRow, Status } from "../api";
+import type { Account, AIDecision, EventRow, History, OrderRow, Status } from "../api";
 import { money, money0, pct, qty, shortTime } from "../format";
 
 export function Vitals({ account, status }: { account: Account | null; status: Status | null }) {
@@ -248,6 +248,51 @@ export function PastResults({ history }: { history: History | null }) {
           ))}
         </tbody>
       </table>
+    </section>
+  );
+}
+
+const ACTION_TAG: Record<string, string> = { buy: "good", sell: "warn", hold: "info" };
+
+export function AIDecisions({ rows, error }: { rows: AIDecision[] | null; error: string | null }) {
+  if (!rows || rows.length === 0) return null;
+  const today = rows.filter((r) => new Date(r.ts).toDateString() === new Date().toDateString());
+  const calls = today.filter((r) => r.model && r.model !== "skipped").length;
+  return (
+    <section className="panel" aria-labelledby="ai-title">
+      <div className="panel__head">
+        <div>
+          <h2 id="ai-title">AI decisions</h2>
+          <p className="panel__sub">What the model was asked and why it answered as it did. {calls} call{calls === 1 ? "" : "s"} today.</p>
+        </div>
+      </div>
+      {error && <p className="empty">Can't load AI decisions: {error}</p>}
+      <ol className="ai">
+        {rows.slice(0, 12).map((r) => (
+          <li key={r.id} className="ai__row">
+            <div className="ai__line">
+              <time className="ledger__time" dateTime={r.ts}>{shortTime(r.ts)}</time>
+              <b>{r.symbol}</b>
+              {r.error
+                ? <span className="tag tag--crit"><span aria-hidden="true">✕</span> {r.model === "skipped" ? "skipped" : "error"}</span>
+                : <span className={`tag tag--${ACTION_TAG[r.action ?? "hold"]}`}>{r.action}{r.confidence != null && ` · ${Math.round(r.confidence * 100)}%`}</span>}
+              {r.acted === 1 && <span className="ai__acted">→ order</span>}
+              <span className="ai__q">{r.question === "entry" ? "buy?" : "sell?"}</span>
+            </div>
+            <p className="ai__summary">{r.error ?? r.summary}</p>
+            {(r.pros.length > 0 || r.cons.length > 0) && (
+              <details className="ai__why">
+                <summary>Pros and cons</summary>
+                <div className="ai__cols">
+                  <ul aria-label="For">{r.pros.map((x, i) => <li key={i}><span aria-hidden="true">+</span> {x}</li>)}</ul>
+                  <ul aria-label="Against">{r.cons.map((x, i) => <li key={i}><span aria-hidden="true">−</span> {x}</li>)}</ul>
+                </div>
+                {r.model && <p className="field__hint">{r.model}{r.latency_ms ? ` · ${(r.latency_ms / 1000).toFixed(1)}s` : ""}</p>}
+              </details>
+            )}
+          </li>
+        ))}
+      </ol>
     </section>
   );
 }

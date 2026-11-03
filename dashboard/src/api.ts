@@ -111,7 +111,7 @@ export interface ServiceState {
 
 export type SecretName =
   | "ALPACA_PAPER_KEY_ID" | "ALPACA_PAPER_SECRET_KEY" | "ALPACA_LIVE_KEY_ID" | "ALPACA_LIVE_SECRET_KEY"
-  | "NTFY_TOPIC" | "EMAIL_PASSWORD" | "HEALTHCHECK_URL";
+  | "NTFY_TOPIC" | "EMAIL_PASSWORD" | "HEALTHCHECK_URL" | "ANTHROPIC_API_KEY" | "OPENAI_API_KEY";
 
 export interface Setup {
   configured: boolean;
@@ -137,11 +137,41 @@ export interface ConfigDict {
   guardrails: Limits;
   alerts: { ntfy_server: string; email_from: string; email_to: string[]; smtp_host: string; smtp_port: number };
   service: { loop_seconds: number; heartbeat_stale_minutes: number; daily_summary: boolean; auto_protect: boolean };
+  ai: AISettings;
+}
+
+export interface AISettings {
+  provider: "anthropic" | "openai";
+  model: string;
+  endpoint: string;
+  effort: "low" | "medium" | "high" | "xhigh" | "max";
+  max_calls_per_day: number;
+  timeout_seconds: number;
+}
+
+export interface AIDecision {
+  id: number;
+  ts: string;
+  strategy: string;
+  symbol: string;
+  question: "entry" | "exit";
+  action: "buy" | "sell" | "hold" | null;
+  confidence: number | null;
+  summary: string | null;
+  pros: string[];
+  cons: string[];
+  acted: number;
+  model: string | null;
+  input_tokens: number | null;
+  output_tokens: number | null;
+  latency_ms: number | null;
+  error: string | null;
 }
 
 export interface CatalogItem {
   name: string;
   description: string;
+  backtestable: boolean;
   params: Record<string, number | boolean | string>;
 }
 

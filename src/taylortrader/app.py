@@ -55,6 +55,50 @@ def build_market_data(cfg: Config, creds, journal=None):
     return FallbackData(YahooData(), MarketData(creds, cache, feed="iex"), on_switch=on_switch)
 
 
+def build_news(creds):
+    """Recent headlines for a symbol from Alpaca (free), cached 10 minutes per symbol."""
+    import time
+    from datetime import UTC, datetime, timedelta
+
+    from alpaca.data.historical.news import NewsClient
+    from alpaca.data.requests import NewsRequest
+
+    client = NewsClient(creds.key_id.get_secret_value(), creds.secret_key.get_secret_value())
+    cache: dict[str, tuple[float, list[dict]]] = {}
+
+    def fetch(symbol: str) -> list[dict]:
+        hit = cache.get(symbol)
+        if hit and time.monotonic() - hit[0] < 600:
+            return hit[1]
+        res = client.get_news(NewsRequest(symbols=symbol, start=datetime.now(UTC) - timedelta(days=3),
+                                          limit=8, sort="desc"))
+        items = [{"time": n.created_at.strftime("%m-%d %H:%M UTC"), "source": n.source,
+                  "headline": n.headline[:300], "summary": (n.summary or "")[:400]}
+                 for n in res.data.get("news", [])]
+        cache[symbol] = (time.monotonic(), items)
+        return items
+
+    return fetch
+
+
+def build_ai(cfg: Config, creds, journal):
+    """The AI strategies' context, or None if no AI strategy is enabled. Never raises: a missing
+    key or package becomes llm_error, and AI strategies hold (and say why) until it's fixed."""
+    if not any(sc.name == "ai" for sc in cfg.enabled_strategies):
+        return None
+    from taylortrader import llm
+    from taylortrader.strategies.ai import AIContext
+
+    a = cfg.ai
+    ctx = AIContext(journal=journal, max_calls_per_day=a.max_calls_per_day, news=build_news(creds))
+    try:
+        ctx.llm = llm.build(a.provider, a.model, a.endpoint, a.effort, a.timeout_seconds)
+    except Exception as e:  # noqa: BLE001 - reported through the strategy, never fatal
+        ctx.llm_error = str(e)
+    log.info("ai: %s %s%s", a.provider, a.model, f" (not ready: {ctx.llm_error})" if ctx.llm_error else "")
+    return ctx
+
+
 def build_service(cfg: Config, dry_run: bool = False, config_path=None):
     from taylortrader.broker import AlpacaBroker
     from taylortrader.service import Service
@@ -71,6 +115,7 @@ def build_service(cfg: Config, dry_run: bool = False, config_path=None):
         market_data=build_market_data(cfg, creds, journal),
         journal=journal,
         alerts=alerts,
+        ai=build_ai(cfg, creds, journal),
         dry_run=dry_run or cfg.dry_run,
         config_path=config_path,
         healthcheck_url=hc.get_secret_value() if hc else None,

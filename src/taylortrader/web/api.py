@@ -333,6 +333,10 @@ def create_app(rt: Runtime, cache_ttl: float = 10.0, project: Path = PROJECT) ->
             "recent": rows[-25:][::-1],
         }
 
+    @app.get("/api/ai/decisions")
+    def ai_decisions(limit: int = Query(30, ge=1, le=200)) -> list[dict]:
+        return rt.journal.recent_ai(limit)
+
     @app.get("/api/settings")
     def settings() -> dict[str, Any]:
         return {
@@ -433,6 +437,25 @@ def create_app(rt: Runtime, cache_ttl: float = 10.0, project: Path = PROJECT) ->
             raise HTTPException(422, "No alert channel is set up yet.")
         alerts.send("TaylorTrader test alert", "If you can read this, alerts work.", Level.WARNING, email_copy=True)
         return {"sent": True, "channels": notes}
+
+    @app.post("/api/ai/test", dependencies=[Depends(guard)])
+    def ai_test() -> dict[str, Any]:
+        """One tiny call to the configured model: proves the key, model name and JSON output work."""
+        from taylortrader import llm
+        from taylortrader.strategies.ai import SYSTEM
+
+        a = rt.settings.ai
+        try:
+            client = llm.build(a.provider, a.model, a.endpoint, a.effort, min(a.timeout_seconds, 60), rt.dotenv_path)
+            d = client.ask(SYSTEM, "Connection test from the TaylorTrader dashboard. Nothing to decide: answer hold, "
+                                   "confidence 0, summary \"Connection works.\", with empty pros and cons.",
+                           ("buy", "hold"))
+        except llm.LLMError as e:
+            raise HTTPException(422, str(e)) from None
+        except Exception as e:  # noqa: BLE001 - e.g. no credentials found at all
+            raise HTTPException(422, f"{type(e).__name__}: {str(e)[:200]}") from None
+        return {"ok": True, "model": d.model, "latency_ms": d.latency_ms, "summary": d.summary,
+                "input_tokens": d.input_tokens, "output_tokens": d.output_tokens}
 
     @app.post("/api/service", dependencies=[Depends(guard)])
     def service(body: ServiceBody) -> dict[str, Any]:

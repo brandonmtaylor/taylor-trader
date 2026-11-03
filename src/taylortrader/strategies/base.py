@@ -23,15 +23,16 @@ NO = Signal(False)
 class Bars:
     """Column access as numpy arrays (fast in backtests): bars.close[i], bars.rsi[i]."""
 
-    def __init__(self, df: pd.DataFrame):
+    def __init__(self, df: pd.DataFrame, symbol: str | None = None):
         self.df = df
+        self.symbol = symbol  # set by the live service; None in backtests
         self._cols: dict[str, np.ndarray] = {}
 
     def __len__(self) -> int:
         return len(self.df)
 
     def __getattr__(self, name: str) -> np.ndarray:
-        if name.startswith("_") or name == "df":
+        if name.startswith("_") or name in ("df", "symbol"):
             raise AttributeError(name)
         if name not in self._cols:
             if name not in self.df.columns:
@@ -49,6 +50,7 @@ class Strategy(ABC):
 
     name: ClassVar[str]
     description: ClassVar[str]
+    backtestable: ClassVar[bool] = True  # False when replaying history would be dishonest (AI)
     Params: ClassVar[type]  # a dataclass of tunable parameters with defaults
 
     def __init__(self, params: dict[str, Any] | None = None):

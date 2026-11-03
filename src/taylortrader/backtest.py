@@ -86,6 +86,9 @@ def run(
     slippage_bps: float = 5.0,
     start_cash: float = 10_000.0,
 ) -> Result:
+    if not strategy.backtestable:
+        raise ValueError(f"{strategy.name} can't be backtested honestly: a language model has already read "
+                         "what happened next. Try it in dry run, then on paper.")
     data = indicators.add_all(df)
     b = Bars(data)
     o, h, lo, c = b.open, b.high, b.low, b.close

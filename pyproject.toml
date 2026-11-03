@@ -17,6 +17,8 @@ dependencies = [
     "uvicorn>=0.32",
     # Unofficial Yahoo Finance client, for feed = "yahoo". Breaks when Yahoo changes; pin and upgrade on purpose.
     "yfinance==1.7.0",
+    "anthropic>=0.60",
+    "openai>=1.50",
 ]
 
 [project.scripts]

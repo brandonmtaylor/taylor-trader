@@ -52,6 +52,17 @@ class ServiceConfig:
 
 
 @dataclass(frozen=True)
+class AIConfig:
+    """The model AI strategies ask. API keys live in the Keychain/.env, never here."""
+    provider: str = "anthropic"       # "anthropic" (Claude) or "openai" (any OpenAI-compatible API)
+    model: str = "claude-opus-5-5"
+    endpoint: str = ""                # OpenAI-compatible only, e.g. http://localhost:11434/v1 for Ollama
+    effort: str = "medium"            # Claude only: low, medium, high, xhigh, max
+    max_calls_per_day: int = 40       # across all AI strategies; then they hold until tomorrow
+    timeout_seconds: int = 120
+
+
+@dataclass(frozen=True)
 class Config:
     mode: str = "paper"
     dry_run: bool = False  # decide and alert, but place no orders
@@ -61,6 +72,7 @@ class Config:
     limits: Limits = field(default_factory=Limits)
     alerts: AlertsConfig = field(default_factory=AlertsConfig)
     service: ServiceConfig = field(default_factory=ServiceConfig)
+    ai: AIConfig = field(default_factory=AIConfig)
 
     @property
     def enabled_strategies(self) -> list[StrategyConfig]:
@@ -98,7 +110,7 @@ def parse_config(raw: dict[str, Any]) -> Config:
     from taylortrader.strategies import get_strategy  # avoid import cycle
 
     _reject_secrets(raw)
-    known = {"mode", "dry_run", "data_dir", "feed", "strategies", "guardrails", "alerts", "service"}
+    known = {"mode", "dry_run", "data_dir", "feed", "strategies", "guardrails", "alerts", "service", "ai"}
     unknown = set(raw) - known
     if unknown:
         raise ConfigError(f"unknown setting(s): {sorted(unknown)}")
@@ -166,6 +178,22 @@ def parse_config(raw: dict[str, Any]) -> Config:
         except TypeError as e:
             raise ConfigError(f"[{name}]: {e}") from None
 
+    from taylortrader.llm import EFFORTS, PROVIDERS
+
+    ai = _section(AIConfig, "ai")
+    if ai.provider not in PROVIDERS:
+        raise ConfigError(f"[ai] provider must be one of {PROVIDERS}")
+    if ai.effort not in EFFORTS:
+        raise ConfigError(f"[ai] effort must be one of {EFFORTS}")
+    if not str(ai.model).strip():
+        raise ConfigError("[ai] model can't be empty")
+    if ai.endpoint and not re.match(r"^https?://[^\s]+$", ai.endpoint):
+        raise ConfigError("[ai] endpoint must be an http(s) address")
+    if not 1 <= int(ai.max_calls_per_day) <= 2000:
+        raise ConfigError("[ai] max_calls_per_day must be between 1 and 2000")
+    if not 10 <= int(ai.timeout_seconds) <= 600:
+        raise ConfigError("[ai] timeout_seconds must be between 10 and 600")
+
     return Config(
         mode=mode,
         dry_run=dry_run,
@@ -175,6 +203,7 @@ def parse_config(raw: dict[str, Any]) -> Config:
         limits=limits,
         alerts=_section(AlertsConfig, "alerts"),
         service=_section(ServiceConfig, "service"),
+        ai=ai,
     )
 
 
@@ -198,6 +227,7 @@ def config_to_dict(cfg: Config) -> dict[str, Any]:
         "guardrails": asdict(cfg.limits),
         "alerts": asdict(cfg.alerts),
         "service": asdict(cfg.service),
+        "ai": asdict(cfg.ai),
     }
 
 
@@ -226,7 +256,7 @@ def render_toml(data: dict[str, Any], name: str = "config.toml") -> str:
         lines += ["", "[[strategies]]", *_toml_table({k: v for k, v in sc.items() if k != "params"})]
         if sc.get("params"):
             lines += ["[strategies.params]", *_toml_table(sc["params"])]
-    for section in ("guardrails", "alerts", "service"):
+    for section in ("guardrails", "alerts", "service", "ai"):
         if data.get(section):
             lines += ["", f"[{section}]", *_toml_table(data[section])]
     return "\n".join(lines) + "\n"

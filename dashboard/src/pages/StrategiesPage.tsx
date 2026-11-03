@@ -49,7 +49,7 @@ export function StrategiesPage({ store }: { store: SettingsStore }) {
             value={s}
             catalog={resp.catalog}
             limits={resp.config.guardrails}
-            timeframes={resp.timeframes}
+            timeframes={resp.timeframes} aiDailyLimit={resp.config.ai.max_calls_per_day}
             onChange={(v) => setDraft(draft.map((d, j) => (j === i ? v : d)))}
             onRemove={() => setDraft(draft.filter((_, j) => j !== i))}
           />

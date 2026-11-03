@@ -72,14 +72,28 @@ class Service:
     dry_run: bool = False
     healthcheck_url: str | None = None
     config_path: Path | None = None  # watched: a change restarts the service with the new settings
+    ai: object = None  # AIContext for AI strategies (model, news); built in app.build_service
     now: callable = field(default=lambda: datetime.now(UTC))
     sleep: callable = field(default=time.sleep)
 
     def __post_init__(self):
         self.guardrails = Guardrails(self.cfg.limits)
         self.executor = Executor(self.broker, self.guardrails, self.journal, self.alerts, self.dry_run)
-        self.strategies: dict[str, Strategy] = {sc.name: get_strategy(sc.name, sc.params)
-                                                for sc in self.cfg.enabled_strategies}
+        # One instance per configured strategy, looked up by symbol (each symbol has one owner).
+        # Keying by name would let two blocks of the same strategy overwrite each other's settings.
+        self.strategy_for: dict[str, Strategy] = {}
+        for sc in self.cfg.enabled_strategies:
+            strat = get_strategy(sc.name, sc.params)
+            if hasattr(strat, "attach"):  # the AI strategy: needs the model, journal, news
+                if self.ai is None:
+                    from taylortrader.strategies.ai import AIContext
+
+                    self.ai = AIContext(journal=self.journal, llm_error="the AI model isn't set up (Settings → AI)")
+                self.ai.alerts = self.ai.alerts or self.alerts
+                self.ai.now = self.ai.now or self.now
+                strat.attach(self.ai, sc.name)
+            for sym in sc.symbols:
+                self.strategy_for[sym] = strat
         self.owner: dict[str, StrategyConfig] = {s: sc for sc in self.cfg.enabled_strategies for s in sc.symbols}
         self.last_bar: dict[tuple[str, str], pd.Timestamp] = {}
         self.known_positions: dict[str, float] = {}
@@ -298,7 +312,7 @@ class Service:
         now = self.now()
         df = self.market_data.bars(symbol, sc.timeframe, now - LOOKBACK[sc.timeframe])
         df = completed_bars(df, sc.timeframe, now)
-        strat = self.strategies[sc.name]
+        strat = self.strategy_for[symbol]
         if len(df) <= strat.warmup:
             log.warning("%s %s: only %d bars, need > %d", sc.name, symbol, len(df), strat.warmup)
             return
@@ -307,7 +321,7 @@ class Service:
             return  # no new bar since last decision
         self.last_bar[key] = df.index[-1]
 
-        b = Bars(indicators.add_all(df))
+        b = Bars(indicators.add_all(df), symbol=symbol)
         i = len(df) - 1
         price = float(b.close[i])
         pos = snap.positions.get(symbol)

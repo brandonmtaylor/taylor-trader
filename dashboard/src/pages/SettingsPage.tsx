@@ -4,7 +4,7 @@ import { AlpacaKeys } from "../components/Keys";
 import { Labeled, NoticeLine, NumberInput, SecretField, Toggle, useAction } from "../components/forms";
 import { clone, same, type SettingsStore } from "../settings";
 
-type SectionKey = "guardrails" | "alerts" | "service" | "feed";
+type SectionKey = "guardrails" | "alerts" | "service" | "feed" | "ai";
 
 /** Edit one part of the config with its own Save button. */
 function useSection<K extends SectionKey>(store: SettingsStore, key: K) {
@@ -227,6 +227,83 @@ function ServiceSection({ store, setup, onSetup }: { store: SettingsStore; setup
   );
 }
 
+const MODEL_HINTS: Record<"anthropic" | "openai", string[]> = {
+  anthropic: ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"],
+  openai: ["gpt-5", "gpt-5-mini", "llama3.1", "qwen2.5"],
+};
+
+function AISection({ store, setup, onSetup }: { store: SettingsStore; setup: Setup; onSetup: (s: Setup) => void }) {
+  const s = useSection(store, "ai");
+  const test = useAction();
+  if (!s.draft) return null;
+  const d = s.draft;
+  const setProvider = (provider: "anthropic" | "openai") => {
+    const keep = MODEL_HINTS[provider].includes(d.model) || (provider === "openai" && !d.model.startsWith("claude-"));
+    s.setDraft({ ...d, provider, model: keep ? d.model : MODEL_HINTS[provider][0] });
+  };
+  return (
+    <Section id="ai" title="AI model" sub="Used by AI strategies (experimental). The model only proposes buy, sell or hold; your safety limits and stop-losses still apply to everything it does.">
+      <div className="choices" role="radiogroup" aria-label="AI provider">
+        {([
+          ["anthropic", "Claude (Anthropic)", "Anthropic's models. Answers are guaranteed to match the decision format."],
+          ["openai", "OpenAI-compatible", "OpenAI, OpenRouter, Groq, Together, or a model on this computer through Ollama or LM Studio (free, no key)."],
+        ] as const).map(([id, title, text]) => (
+          <label key={id} className={`choice ${d.provider === id ? "choice--on" : ""}`}>
+            <input type="radio" name="provider" checked={d.provider === id} onChange={() => setProvider(id)} />
+            <span><b>{title}</b><span className="choice__text">{text}</span></span>
+          </label>
+        ))}
+      </div>
+      <div className="grid-fields" style={{ marginTop: 16 }}>
+        <Labeled label="Model" hint={d.provider === "anthropic" ? "Opus is the most capable; Sonnet and Haiku cost less per call." : "The model name your provider or local server uses."}
+          render={(id) => (
+            <>
+              <input id={id} className="input input--mono" list={`${id}-models`} spellCheck={false} value={d.model}
+                onChange={(e) => s.setDraft({ ...d, model: e.target.value.trim() })} />
+              <datalist id={`${id}-models`}>{MODEL_HINTS[d.provider].map((m) => <option key={m} value={m} />)}</datalist>
+            </>
+          )} />
+        {d.provider === "openai" ? (
+          <Labeled label="Endpoint" wide hint={<>Empty for OpenAI. Ollama <code>http://localhost:11434/v1</code> · LM Studio <code>http://localhost:1234/v1</code> · OpenRouter <code>https://openrouter.ai/api/v1</code></>}
+            render={(id) => (
+              <input id={id} className="input input--mono" spellCheck={false} placeholder="https://api.openai.com/v1"
+                value={d.endpoint} onChange={(e) => s.setDraft({ ...d, endpoint: e.target.value.trim() })} />
+            )} />
+        ) : (
+          <Labeled label="Effort" hint="How hard it thinks. Higher is slower and costs more." render={(id) => (
+            <select id={id} className="input" value={d.effort} onChange={(e) => s.setDraft({ ...d, effort: e.target.value as typeof d.effort })}>
+              {["low", "medium", "high", "xhigh", "max"].map((x) => <option key={x}>{x}</option>)}
+            </select>
+          )} />
+        )}
+        <Labeled label="Daily limit" hint="Model calls per day across all AI strategies; after that they hold" render={(id) => (
+          <NumberInput id={id} value={d.max_calls_per_day} suffix="calls" onChange={(max_calls_per_day) => s.setDraft({ ...d, max_calls_per_day: Math.round(max_calls_per_day) })} />
+        )} />
+      </div>
+      <SaveRow dirty={s.dirty} busy={s.act.busy} onSave={() => s.save("Saved.")} onReset={s.reset} />
+      <NoticeLine notice={s.act.notice} />
+
+      <SecretField key={d.provider} name={d.provider === "anthropic" ? "ANTHROPIC_API_KEY" : "OPENAI_API_KEY"}
+        label={d.provider === "anthropic" ? "Anthropic API key" : "API key (not needed for a local model)"}
+        hint={d.provider === "anthropic" ? "From console.anthropic.com → API keys." : "From your provider's dashboard."}
+        setup={setup} onSaved={onSetup} placeholder={d.provider === "anthropic" ? "sk-ant-…" : "sk-…"} />
+
+      <div className="saverow">
+        <button type="button" className="btn" disabled={test.busy || s.dirty}
+          onClick={() => test.run(async () => {
+            const r = await send<{ model: string; latency_ms: number; input_tokens: number | null; output_tokens: number | null }>("POST", "/api/ai/test");
+            const tokens = r.input_tokens != null ? ` · ${r.input_tokens + (r.output_tokens ?? 0)} tokens` : "";
+            return `${r.model} answered in ${(r.latency_ms / 1000).toFixed(1)}s${tokens}. Decisions come back in the right format.`;
+          })}>
+          {test.busy ? "Asking the model…" : "Test the model"}
+        </button>
+        {s.dirty && <span className="field__hint">Save first, then test.</span>}
+      </div>
+      <NoticeLine notice={test.notice} />
+    </Section>
+  );
+}
+
 export function SettingsPage({ store, setup, onSetup }: { store: SettingsStore; setup: Setup | null; onSetup: (s: Setup) => void }) {
   if (!store.resp || !setup) return <main className="page"><p className="empty">{store.error ?? "Loading…"}</p></main>;
   return (
@@ -249,6 +326,7 @@ export function SettingsPage({ store, setup, onSetup }: { store: SettingsStore; 
         </Section>
         <LimitsSection store={store} />
         <AlertsSection store={store} setup={setup} onSetup={onSetup} />
+        <AISection store={store} setup={setup} onSetup={onSetup} />
         <DataSection store={store} />
         <ServiceSection store={store} setup={setup} onSetup={onSetup} />
       </div>

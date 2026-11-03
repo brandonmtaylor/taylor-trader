@@ -230,3 +230,23 @@ def test_live_needs_phrase_and_working_live_keys(client):
 def test_pause_and_resume(client):
     assert client.post("/api/pause", json={"paused": True}, headers=WRITE).json()["kill_switch"] is True
     assert client.post("/api/pause", json={"paused": False}, headers=WRITE).json()["kill_switch"] is False
+
+
+def test_ai_decisions_and_backtest_refusal(client):
+    client.rt.journal.record_ai(strategy="ai", symbol="VRT", question="entry", action="hold", confidence=0.4,
+                                summary="Wait.", pros=["cheap"], cons=["falling"], model="m")
+    rows = client.get("/api/ai/decisions").json()
+    assert rows[0]["summary"] == "Wait." and rows[0]["cons"] == ["falling"]
+    cat = {c["name"]: c for c in client.get("/api/settings").json()["catalog"]}
+    assert cat["ai"]["backtestable"] is False and "instructions" in cat["ai"]["params"]
+    assert client.get("/api/settings").json()["config"]["ai"]["provider"] == "anthropic"
+
+
+def test_ai_test_reports_missing_setup(client, monkeypatch):
+    from taylortrader import llm
+
+    def build(*a, **k):
+        raise llm.LLMError("Add an OpenAI API key, or set an endpoint for a local model (Settings → AI)")
+    monkeypatch.setattr(llm, "build", build)
+    r = client.post("/api/ai/test", headers=WRITE)
+    assert r.status_code == 422 and "API key" in r.json()["detail"]
