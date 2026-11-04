@@ -1,5 +1,107 @@
-import type { Account, AIDecision, EventRow, History, OrderRow, Status } from "../api";
+import type { Account, AIDecision, EventRow, History, OrderRow, Performance, PositionRow, Results, Status } from "../api";
 import { money, money0, pct, qty, shortTime } from "../format";
+
+const PERIOD_WORDS: Record<Performance["period"], string> = { "1M": "past month", "3M": "past 3 months", "1A": "past year" };
+
+/** Largest fall from a running peak, in percent (negative), or null without enough points. */
+function worstDrop(perf: Performance | null): number | null {
+  const pts = perf?.equity ?? [];
+  if (pts.length < 2) return null;
+  let peak = pts[0].v;
+  let worst = 0;
+  for (const p of pts) {
+    peak = Math.max(peak, p.v);
+    worst = Math.min(worst, (p.v / peak - 1) * 100);
+  }
+  return worst;
+}
+
+const signedMoney = (n: number) => `${n > 0 ? "+" : n < 0 ? "−" : ""}${money(Math.abs(n))}`;
+
+export function ResultsPanel({ results, perf, error }: { results: Results | null; perf: Performance | null; error: string | null }) {
+  const r = results?.bot;
+  const drop = worstDrop(perf);
+  const other = results?.other;
+  return (
+    <section className="panel" aria-labelledby="results-title">
+      <div className="panel__head">
+        <div>
+          <h2 id="results-title">Results</h2>
+          <p className="panel__sub">Closed trades the bot opened in this account, from Alpaca's fills (stop-losses included).</p>
+        </div>
+      </div>
+      {error && <p className="empty">Can't load results: {error}</p>}
+      {r && r.trades === 0 && (
+        <p className="empty">No closed trades yet. Results show up here once the bot has bought and sold something.</p>
+      )}
+      {r && r.trades > 0 && (
+        <>
+          <dl className="stats">
+            <div>
+              <dt>Win rate</dt>
+              <dd>{pct(r.win_rate, false, 0)}</dd>
+              <dd className="stats__sub">{r.wins} of {r.trades} trade{r.trades === 1 ? "" : "s"}</dd>
+            </div>
+            <div>
+              <dt>Average win / loss</dt>
+              <dd>
+                <span className="is-up">{r.avg_win == null ? "—" : signedMoney(r.avg_win)}</span>
+                <span className="stats__slash"> / </span>
+                <span className="is-down">{r.avg_loss == null ? "—" : signedMoney(r.avg_loss)}</span>
+              </dd>
+              <dd className="stats__sub">{pct(r.avg_win_pct, true, 1)} / {pct(r.avg_loss_pct, true, 1)} per trade</dd>
+            </div>
+            <div>
+              <dt>Won per $1 lost</dt>
+              <dd>{r.profit_factor == null ? "—" : `$${r.profit_factor.toFixed(2)}`}</dd>
+              <dd className="stats__sub">{r.profit_factor == null ? "no losing trades yet" : "above $1 means it's making money"}</dd>
+            </div>
+            <div>
+              <dt>Realized</dt>
+              <dd className={r.realized < 0 ? "is-down" : r.realized > 0 ? "is-up" : ""}>{signedMoney(r.realized)}</dd>
+              <dd className="stats__sub">today {signedMoney(r.today.realized)} · {r.today.trades} closed</dd>
+            </div>
+            <div>
+              <dt>Worst drop</dt>
+              <dd className={drop != null && drop < 0 ? "is-down" : ""}>{drop == null ? "—" : pct(drop, true, 1)}</dd>
+              <dd className="stats__sub">account, peak to low, {perf ? PERIOD_WORDS[perf.period] : "—"}</dd>
+            </div>
+          </dl>
+          <p className="streak">
+            <span className="streak__label">Last {r.last.length}</span>
+            {r.last.map((x, i) => (
+              <span key={i} className={`streak__pip streak__pip--${x}`} aria-label={x === "W" ? "win" : "loss"}>{x}</span>
+            ))}
+            {r.streak && r.streak.n > 1 && (
+              <span className="streak__now">{r.streak.n} {r.streak.kind === "W" ? "wins" : "losses"} in a row</span>
+            )}
+          </p>
+          {results.by_strategy.length > 1 && (
+            <table className="table">
+              <thead><tr><th>Strategy</th><th className="num">Trades</th><th className="num">Won</th><th className="num">Realized</th></tr></thead>
+              <tbody>
+                {results.by_strategy.map((s) => (
+                  <tr key={s.strategy}>
+                    <td className="sym">{s.strategy}</td>
+                    <td className="num">{s.trades}</td>
+                    <td className="num">{pct(s.win_rate, false, 0)}</td>
+                    <td className={`num ${s.realized < 0 ? "is-down" : s.realized > 0 ? "is-up" : ""}`}>{signedMoney(s.realized)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </>
+      )}
+      {other && other.trades > 0 && (
+        <p className="note">
+          Not counted: {other.trades} trade{other.trades === 1 ? "" : "s"} the bot didn't open (bought by hand or by
+          the old bot), {signedMoney(other.realized)}.
+        </p>
+      )}
+    </section>
+  );
+}
 
 export function Vitals({ account, status }: { account: Account | null; status: Status | null }) {
   const maxExposure = status?.limits.max_total_exposure_pct;
@@ -38,7 +140,12 @@ export function Vitals({ account, status }: { account: Account | null; status: S
   );
 }
 
-export function Positions({ account, error }: { account: Account | null; error: string | null }) {
+export function Positions({ account, error, onSell, notice }: {
+  account: Account | null; error: string | null;
+  /** a row to sell it, null to sell everything */
+  onSell: (row: PositionRow | null) => void;
+  notice: string | null;
+}) {
   const rows = account?.positions ?? [];
   const exposed = rows.filter((p) => !p.has_stop).length;
   return (
@@ -54,7 +161,11 @@ export function Positions({ account, error }: { account: Account | null; error: 
                 : `${exposed} of ${rows.length} without a stop-loss at Alpaca.`}
           </p>
         </div>
+        {rows.length > 0 && (
+          <button type="button" className="btn btn--sm btn--danger" onClick={() => onSell(null)}>Sell everything</button>
+        )}
       </div>
+      {notice && <p className="notice notice--good" role="status">{notice}</p>}
       {error && <p className="empty">Can't load positions: {error}</p>}
       {rows.length > 0 && (
         <div className="scroll">
@@ -69,6 +180,7 @@ export function Positions({ account, error }: { account: Account | null; error: 
                 <th className="num">Gain</th>
                 <th className="num">Shares</th>
                 <th className="num">Avg cost</th>
+                <th><span className="sr-only">Actions</span></th>
               </tr>
             </thead>
             <tbody>
@@ -88,6 +200,10 @@ export function Positions({ account, error }: { account: Account | null; error: 
                   </td>
                   <td className="num">{qty(p.qty)}</td>
                   <td className="num">{money(p.avg_entry_price)}</td>
+                  <td className="row-action">
+                    <button type="button" className="btn btn--sm btn--quiet" onClick={() => onSell(p)}
+                      aria-label={`Sell ${p.symbol}`}>Sell</button>
+                  </td>
                 </tr>
               ))}
             </tbody>

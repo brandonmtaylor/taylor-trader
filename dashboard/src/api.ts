@@ -59,6 +59,34 @@ export interface Account {
   positions: PositionRow[];
 }
 
+export interface ResultSummary {
+  trades: number;
+  wins: number;
+  losses: number;
+  win_rate: number | null;
+  avg_win: number | null;
+  avg_loss: number | null;
+  avg_win_pct: number | null;
+  avg_loss_pct: number | null;
+  profit_factor: number | null;
+  realized: number;
+  today: { trades: number; wins: number; realized: number };
+  last: ("W" | "L")[];
+  streak: { kind: "W" | "L"; n: number } | null;
+}
+
+export interface Results {
+  bot: ResultSummary;
+  by_strategy: { strategy: string; trades: number; wins: number; win_rate: number | null; realized: number }[];
+  other: { trades: number; realized: number };
+}
+
+export interface SellAllResult {
+  sold: { symbol: string; qty: number }[];
+  failed: { symbol: string; error: string }[];
+  paused: boolean;
+}
+
 export interface Point {
   t: number;
   v: number;

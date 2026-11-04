@@ -11,6 +11,7 @@ Feeds:
 from __future__ import annotations
 
 import logging
+import warnings
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -121,6 +122,10 @@ class YahooData:
     def __init__(self, timeout: float = 10.0):
         import yfinance  # imported here so Alpaca-only setups don't pay for it
 
+        # yfinance still calls pandas with inplace=True, which pandas 3.1 warns about on every
+        # download. Harmless, and yfinance's to fix. This has to come after the import: importing
+        # yfinance puts its own warning filter in front of any added earlier.
+        warnings.filterwarnings("ignore", message=r"The inplace keyword in DataFrame")
         self._yf = yfinance
         self.timeout = timeout
 

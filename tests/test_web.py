@@ -250,3 +250,55 @@ def test_ai_test_reports_missing_setup(client, monkeypatch):
     monkeypatch.setattr(llm, "build", build)
     r = client.post("/api/ai/test", headers=WRITE)
     assert r.status_code == 422 and "API key" in r.json()["detail"]
+
+
+# --- selling by hand and results -------------------------------------------------------------------
+
+def test_sell_one_position_is_journaled(client):
+    r = client.post("/api/positions/sell", json={"symbol": "aapl"}, headers=WRITE)
+    assert r.status_code == 200 and r.json()["symbol"] == "AAPL"
+    assert client.broker.closes == ["AAPL"]
+    row = client.rt.journal.recent_orders(1)[0]
+    assert row["side"] == "sell" and row["strategy"] == "dashboard" and row["broker_order_id"] == "c1"
+    assert client.post("/api/positions/sell", json={"symbol": "TSLA"}, headers=WRITE).status_code == 404
+    assert client.post("/api/positions/sell", json={"symbol": "VRT"}).status_code == 403  # writes need the header
+
+
+def test_sell_everything_needs_phrase_pauses_and_keeps_going(client):
+    cancelled = []
+    client.broker.cancel_all_orders = lambda: cancelled.append(True)
+    assert client.post("/api/positions/sell-all", json={"confirm": "yes"}, headers=WRITE).status_code == 422
+    assert client.broker.closes == [] and not kill_file(client.rt.settings).exists()
+
+    real_close = client.broker.close_position
+
+    def close(symbol, reason=""):
+        if symbol == "AAPL":
+            raise RuntimeError("insufficient qty")
+        return real_close(symbol, reason)
+    client.broker.close_position = close
+    out = client.post("/api/positions/sell-all", json={"confirm": "SELL ALL"}, headers=WRITE).json()
+    assert [s["symbol"] for s in out["sold"]] == ["VRT"] and out["failed"][0]["symbol"] == "AAPL"
+    assert kill_file(client.rt.settings).exists() and cancelled == [True]
+
+
+def test_results_pair_fills_and_credit_the_strategy(client):
+    from datetime import timedelta
+
+    from taylortrader.stats import Fill
+
+    t0 = datetime.now(UTC) - timedelta(days=3)
+    client.rt.journal.record_order(mode="paper", strategy="macd_rsi", symbol="VRT", side="buy", status="filled",
+                                   broker_order_id="b1")
+    client.broker.fills = lambda: [
+        Fill(t0, "VRT", "buy", 10, 100.0, "b1"),
+        Fill(t0 + timedelta(days=1), "VRT", "sell", 10, 110.0, "s1"),       # bot trade: +$100
+        Fill(t0, "AAPL", "buy", 2, 200.0, "manual"),
+        Fill(t0 + timedelta(hours=2), "AAPL", "sell", 2, 190.0, "s2"),       # hand trade: -$20
+        Fill(t0 - timedelta(days=1), "MSFT", "sell", 1, 400.0, "s3"),        # opened before the window: skipped
+    ]
+    r = client.get("/api/results").json()
+    assert r["bot"]["trades"] == 1 and r["bot"]["realized"] == pytest.approx(100)
+    assert r["bot"]["streak"] == {"kind": "W", "n": 1} and r["bot"]["profit_factor"] is None
+    assert r["by_strategy"][0]["strategy"] == "macd_rsi"
+    assert r["other"] == {"trades": 1, "realized": pytest.approx(-20)}

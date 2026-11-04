@@ -63,7 +63,7 @@ export function App() {
     <div className={`app app--${status.data?.mode ?? "paper"}`}>
       <Header status={status.data} setup={setup} now={now} error={status.error} route={page}
         onStatus={onStatus} onSetup={onSetup} />
-      {page === "/" && <Overview status={status.data} />}
+      {page === "/" && <Overview status={status.data} onStatus={() => status.reload()} />}
       {page === "/strategies" && <StrategiesPage store={store} />}
       {page === "/settings" && <SettingsPage store={store} setup={setup} onSetup={onSetup} />}
       {page === "/setup" && <SetupPage store={store} setup={setup} onSetup={onSetup} />}

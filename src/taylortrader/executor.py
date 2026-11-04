@@ -53,6 +53,10 @@ class Executor:
                       "reason": intent.reason}
         if not decision:
             why = "; ".join(decision.reasons)
+            if intent.qty < 1 and price > 0:  # say why in money, not "quantity must be positive"
+                budget = account.equity * sc.allocation_pct / 100
+                why = (f"{sc.allocation_pct:g}% of ${account.equity:,.0f} is ${budget:,.0f}, less than one share at "
+                       f"${price:,.2f}. Raise the strategy's position size or add money to the account")
             log.warning("blocked %s %s: %s", symbol, sc.name, why)
             self._record(status="blocked", detail=why, **common)
             self.alerts.send(f"Blocked buy: {symbol}", f"{intent.reason}\nGuardrails: {why}",

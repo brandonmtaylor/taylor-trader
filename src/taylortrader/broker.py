@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import logging
 import math
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from alpaca.trading.client import TradingClient
 from alpaca.trading.enums import OrderClass, OrderSide, OrderType, QueryOrderStatus, TimeInForce
@@ -92,6 +92,23 @@ class AlpacaBroker:
         h = self._client.get_portfolio_history(GetPortfolioHistoryRequest(period=period, timeframe="1D"))
         return [(int(t), float(e)) for t, e in zip(h.timestamp or [], h.equity or []) if e]
 
+    def fills(self, days: int = 365) -> list:
+        """Filled buys and sells (stop-loss legs included), for the results panel."""
+        from taylortrader.stats import Fill
+
+        after = datetime.now(UTC) - timedelta(days=days)
+        orders = self._client.get_orders(GetOrdersRequest(status=QueryOrderStatus.CLOSED, after=after,
+                                                          limit=500, nested=True))
+        out = []
+        for o in orders:
+            for x in [o, *(o.legs or [])]:
+                qty = float(x.filled_qty or 0)
+                if x.filled_at is None or qty <= 0 or x.filled_avg_price is None:
+                    continue
+                side = str(getattr(x.side, "value", x.side))
+                out.append(Fill(x.filled_at, x.symbol, side, qty, float(x.filled_avg_price), str(x.id)))
+        return out
+
     def get_order(self, order_id: str):
         return self._client.get_order_by_id(order_id)
 
@@ -164,3 +181,8 @@ class AlpacaBroker:
                     log.warning("cancel %s order %s failed: %s", symbol, o.id, e)
         log.info("[%s] SELL all %s (%s)", self.mode, symbol, reason)
         return self._client.close_position(symbol)
+
+    def cancel_all_orders(self) -> None:
+        """Cancel every open order in the account (used by "sell everything", after the closes)."""
+        log.info("[%s] CANCEL all open orders", self.mode)
+        self._client.cancel_orders()

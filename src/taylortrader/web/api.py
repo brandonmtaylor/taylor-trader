@@ -58,6 +58,7 @@ STATIC = Path(__file__).parent / "static"
 PROJECT = Path(__file__).resolve().parents[3]
 BENCHMARK = "SPY"
 GO_LIVE_PHRASE = "GO LIVE"
+SELL_ALL_PHRASE = "SELL ALL"
 WRITE_HEADER = "x-taylortrader"
 FORBIDDEN = "Changes must come from the TaylorTrader dashboard."
 
@@ -125,6 +126,14 @@ class ModeBody(BaseModel):
 
 class PauseBody(BaseModel):
     paused: bool
+
+
+class SellBody(BaseModel):
+    symbol: str = Field(min_length=1, max_length=15)
+
+
+class SellAllBody(BaseModel):
+    confirm: str = ""
 
 
 class ServiceBody(BaseModel):
@@ -337,6 +346,21 @@ def create_app(rt: Runtime, cache_ttl: float = 10.0, project: Path = PROJECT) ->
     def ai_decisions(limit: int = Query(30, ge=1, le=200)) -> list[dict]:
         return rt.journal.recent_ai(limit)
 
+    @app.get("/api/results")
+    def results() -> dict[str, Any]:
+        """Closed trades from Alpaca's fills, credited to the strategy whose buy opened them."""
+        from taylortrader.stats import results as compute
+
+        broker = need_broker()
+
+        def load():
+            fills = _broker_call(broker.fills)
+            strategy_of = {r["broker_order_id"]: r["strategy"] for r in rt.journal.db.execute(
+                "SELECT broker_order_id, strategy FROM orders WHERE side='buy' AND broker_order_id IS NOT NULL")}
+            return compute(fills, strategy_of, datetime.now(UTC))
+
+        return cache.get("results", load)
+
     @app.get("/api/settings")
     def settings() -> dict[str, Any]:
         return {
@@ -426,6 +450,58 @@ def create_app(rt: Runtime, cache_ttl: float = 10.0, project: Path = PROJECT) ->
         rt.journal.event("pause" if body.paused else "resume",
                          "new buys paused from the dashboard" if body.paused else "resumed from the dashboard")
         return status()
+
+    # --- selling by hand ---------------------------------------------------------------------------
+    # These are real orders even in dry-run: dry-run stops the *bot* from trading, not you.
+
+    def sell(broker, symbol: str, pos, reason: str) -> dict[str, Any]:
+        order = broker.close_position(symbol, reason)
+        rt.journal.record_order(
+            mode=broker.mode, strategy="dashboard", symbol=symbol, side="sell", status="submitted",
+            qty=pos.qty, est_price=pos.market_value / pos.qty if pos.qty else None, reason=reason,
+            broker_order_id=str(getattr(order, "id", "")) or None)
+        return {"symbol": symbol, "qty": pos.qty}
+
+    @app.post("/api/positions/sell", dependencies=[Depends(guard)])
+    def sell_position(body: SellBody) -> dict[str, Any]:
+        broker = need_broker()
+        symbol = body.symbol.strip().upper()
+        pos = _broker_call(broker.snapshot).positions.get(symbol)
+        if pos is None:
+            raise HTTPException(404, f"You don't hold {symbol} right now.")
+        try:
+            sold = sell(broker, symbol, pos, "sold by you from the dashboard")
+        except Exception as e:  # noqa: BLE001 - shown to the user
+            raise HTTPException(502, f"Alpaca didn't accept the sell for {symbol}: {str(e)[:200]}") from None
+        rt.journal.event("manual_sell", f"{symbol}: sell all {pos.qty:g} shares from the dashboard", "warning")
+        cache.clear()
+        return sold
+
+    @app.post("/api/positions/sell-all", dependencies=[Depends(guard)])
+    def sell_everything(body: SellAllBody) -> dict[str, Any]:
+        """Pause new buys, sell every position in the account, then cancel whatever orders are left."""
+        if body.confirm.strip() != SELL_ALL_PHRASE:
+            raise HTTPException(422, f"Type {SELL_ALL_PHRASE} to confirm.")
+        broker = need_broker()
+        path = kill_file(rt.settings)  # first, so the bot can't buy back in while this runs
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(f"paused by sell everything at {datetime.now(UTC).isoformat()}\n")
+        positions = _broker_call(broker.snapshot).positions
+        sold, failed = [], []
+        for symbol, pos in sorted(positions.items()):
+            try:
+                sold.append(sell(broker, symbol, pos, "sell everything, from the dashboard"))
+            except Exception as e:  # noqa: BLE001 - keep going: one refusal mustn't stop the rest
+                failed.append({"symbol": symbol, "error": str(e)[:200]})
+        try:
+            broker.cancel_all_orders()
+        except Exception as e:  # noqa: BLE001
+            failed.append({"symbol": "open orders", "error": f"couldn't cancel: {str(e)[:200]}"})
+        names = ", ".join(s["symbol"] for s in sold) or "nothing"
+        rt.journal.event("sell_all", f"sell everything from the dashboard: selling {names}; new buys paused"
+                         + (f"; {len(failed)} failed" if failed else ""), "error" if failed else "warning")
+        cache.clear()
+        return {"sold": sold, "failed": failed, "paused": True}
 
     @app.post("/api/alerts/test", dependencies=[Depends(guard)])
     def alerts_test() -> dict[str, Any]:
