@@ -302,3 +302,7 @@ def test_results_pair_fills_and_credit_the_strategy(client):
     assert r["bot"]["streak"] == {"kind": "W", "n": 1} and r["bot"]["profit_factor"] is None
     assert r["by_strategy"][0]["strategy"] == "macd_rsi"
     assert r["other"] == {"trades": 1, "realized": pytest.approx(-20)}
+
+
+def test_page_is_never_served_stale(client):
+    assert client.get("/api/status").headers["cache-control"] == "no-cache"

@@ -586,6 +586,15 @@ def create_app(rt: Runtime, cache_ttl: float = 10.0, project: Path = PROJECT) ->
 
     # --- the page --------------------------------------------------------------------------------
 
+    @app.middleware("http")
+    async def fresh_page(request: Request, call_next):
+        """The page must be re-checked on every load, or an update shows the old dashboard until a
+        hard refresh. Built assets have content hashes in their names, so those can be cached."""
+        response = await call_next(request)
+        if not request.url.path.startswith("/assets/"):
+            response.headers["Cache-Control"] = "no-cache"
+        return response
+
     @app.exception_handler(404)
     async def not_found(request, exc):
         if request.url.path.startswith("/api/") or not (STATIC / "index.html").exists():
