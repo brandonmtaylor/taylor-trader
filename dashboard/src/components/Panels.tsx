@@ -140,14 +140,16 @@ export function Vitals({ account, status }: { account: Account | null; status: S
   );
 }
 
-export function Positions({ account, error, onSell, notice }: {
-  account: Account | null; error: string | null;
+export function Positions({ account, error, onSell, notice, marketOpen }: {
+  account: Account | null; error: string | null; marketOpen: boolean | null;
   /** a row to sell it, null to sell everything */
   onSell: (row: PositionRow | null) => void;
   notice: string | null;
 }) {
   const rows = account?.positions ?? [];
-  const exposed = rows.filter((p) => !p.has_stop).length;
+  const exposed = rows.filter((p) => !p.has_stop && !p.selling).length;
+  const sellable = rows.filter((p) => !p.selling);
+  const waiting = rows.length - sellable.length;
   return (
     <section className="panel" aria-labelledby="pos-title">
       <div className="panel__head">
@@ -156,12 +158,14 @@ export function Positions({ account, error, onSell, notice }: {
           <p className="panel__sub">
             {rows.length === 0
               ? "Nothing held right now."
-              : exposed === 0
-                ? "Every position has a stop-loss at Alpaca."
-                : `${exposed} of ${rows.length} without a stop-loss at Alpaca.`}
+              : exposed > 0
+                ? `${exposed} of ${rows.length} without a stop-loss at Alpaca.`
+                : waiting === rows.length
+                  ? `Everything is being sold${marketOpen === false ? " at the next open" : ""}.`
+                  : "Every position has a stop-loss at Alpaca."}
           </p>
         </div>
-        {rows.length > 0 && (
+        {sellable.length > 0 && (
           <button type="button" className="btn btn--sm btn--danger" onClick={() => onSell(null)}>Sell everything</button>
         )}
       </div>
@@ -188,7 +192,9 @@ export function Positions({ account, error, onSell, notice }: {
                 <tr key={p.symbol} className={p.issues.length ? "row--issue" : ""}>
                   <td className="sym">{p.symbol}</td>
                   <td>
-                    {p.has_stop
+                    {p.selling && !p.has_stop
+                      ? <span className="muted">Not needed</span>
+                      : p.has_stop
                       ? <span className="tag tag--good"><span aria-hidden="true">✓</span> At Alpaca</span>
                       : <span className="tag tag--crit"><span aria-hidden="true">✕</span> None</span>}
                   </td>
@@ -201,8 +207,10 @@ export function Positions({ account, error, onSell, notice }: {
                   <td className="num">{qty(p.qty)}</td>
                   <td className="num">{money(p.avg_entry_price)}</td>
                   <td className="row-action">
-                    <button type="button" className="btn btn--sm btn--quiet" onClick={() => onSell(p)}
-                      aria-label={`Sell ${p.symbol}`}>Sell</button>
+                    {p.selling
+                      ? <span className="tag tag--info">{marketOpen === false ? "Selling at open" : "Selling…"}</span>
+                      : <button type="button" className="btn btn--sm btn--quiet" onClick={() => onSell(p)}
+                          aria-label={`Sell ${p.symbol}`}>Sell</button>}
                   </td>
                 </tr>
               ))}

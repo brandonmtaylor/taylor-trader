@@ -33,7 +33,8 @@ export function Overview({ status, onStatus }: { status: Status | null; onStatus
       <div className="col col--main">
         <EquityChart perf={perf.data} period={period} onPeriod={setPeriod} error={perf.error} />
         <ResultsPanel results={results.data} perf={perf.data} error={results.error} />
-        <Positions account={account.data} error={account.error} onSell={(row) => { setSold(null); setSelling(row); }} notice={sold} />
+        <Positions account={account.data} error={account.error} onSell={(row) => { setSold(null); setSelling(row); }} notice={sold}
+          marketOpen={status?.market?.is_open ?? null} />
         <Orders orders={orders.data} error={orders.error} />
       </div>
       <aside className="col col--side">
@@ -45,7 +46,7 @@ export function Overview({ status, onStatus }: { status: Status | null; onStatus
       <SellDialog
         open={selling !== undefined}
         target={selling ?? null}
-        positions={account.data?.positions ?? []}
+        positions={(account.data?.positions ?? []).filter((p) => !p.selling)}
         live={status?.mode === "live"}
         marketOpen={status?.market?.is_open ?? null}
         onClose={() => setSelling(undefined)}

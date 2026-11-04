@@ -81,6 +81,13 @@ class AlpacaBroker:
             if o.side == OrderSide.SELL and o.order_type in _STOP_TYPES
         }
 
+    def symbols_selling(self) -> set[str]:
+        """Symbols with a sell waiting to fill (a close, not a protective stop or bracket leg),
+        e.g. one sent while the market is closed."""
+        orders = self._client.get_orders(GetOrdersRequest(status=QueryOrderStatus.OPEN, nested=True))
+        return {o.symbol for o in orders
+                if o.side == OrderSide.SELL and o.order_type in (OrderType.MARKET, OrderType.LIMIT)}
+
     def trades_today(self) -> int:
         start = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
         orders = self._client.get_orders(

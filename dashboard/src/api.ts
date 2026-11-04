@@ -46,6 +46,8 @@ export interface PositionRow {
   unrealized_pct: number | null;
   has_stop: boolean;
   owner: string | null;
+  /** a sell is already waiting to fill (e.g. sent while the market was closed) */
+  selling: boolean;
   issues: string[];
 }
 

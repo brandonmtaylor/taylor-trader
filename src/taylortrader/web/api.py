@@ -266,9 +266,10 @@ def create_app(rt: Runtime, cache_ttl: float = 10.0, project: Path = PROJECT) ->
         def load():
             snap = _broker_call(broker.snapshot)
             stops = _broker_call(broker.symbols_with_stop)
-            return snap, stops
+            selling = _broker_call(broker.symbols_selling)
+            return snap, stops, selling
 
-        snap, stops = cache.get("account", load)
+        snap, stops, selling = cache.get("account", load)
         own = owners()
         problems = find_unmanaged_positions(snap.positions, stops, own)
         positions = []
@@ -280,6 +281,7 @@ def create_app(rt: Runtime, cache_ttl: float = 10.0, project: Path = PROJECT) ->
                 "avg_entry_price": p.avg_entry_price, "price": price,
                 "unrealized_pct": (price / p.avg_entry_price - 1) * 100 if p.avg_entry_price else None,
                 "has_stop": p.symbol in stops, "owner": own.get(p.symbol),
+                "selling": p.symbol in selling,
                 "issues": problems.get(p.symbol, []),
             })
         return {
@@ -469,6 +471,8 @@ def create_app(rt: Runtime, cache_ttl: float = 10.0, project: Path = PROJECT) ->
         pos = _broker_call(broker.snapshot).positions.get(symbol)
         if pos is None:
             raise HTTPException(404, f"You don't hold {symbol} right now.")
+        if symbol in _broker_call(broker.symbols_selling):
+            raise HTTPException(409, f"{symbol} already has a sell waiting to fill.")
         try:
             sold = sell(broker, symbol, pos, "sold by you from the dashboard")
         except Exception as e:  # noqa: BLE001 - shown to the user

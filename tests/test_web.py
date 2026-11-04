@@ -261,6 +261,10 @@ def test_sell_one_position_is_journaled(client):
     row = client.rt.journal.recent_orders(1)[0]
     assert row["side"] == "sell" and row["strategy"] == "dashboard" and row["broker_order_id"] == "c1"
     assert client.post("/api/positions/sell", json={"symbol": "TSLA"}, headers=WRITE).status_code == 404
+    client.broker.selling = {"AAPL"}  # the sell is waiting for the open
+    assert client.post("/api/positions/sell", json={"symbol": "AAPL"}, headers=WRITE).status_code == 409
+    rows = {p["symbol"]: p for p in client.get("/api/account").json()["positions"]}
+    assert rows["AAPL"]["selling"] is True and rows["VRT"]["selling"] is False
     assert client.post("/api/positions/sell", json={"symbol": "VRT"}).status_code == 403  # writes need the header
 
 

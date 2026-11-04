@@ -270,9 +270,14 @@ class Service:
         self.known_positions = held
 
         stops = self.broker.symbols_with_stop()
+        # A position with a sell already waiting (e.g. sold from the dashboard after hours) had its
+        # stop cancelled on purpose. Re-adding one would hold the shares and block that sell.
+        selling = self.broker.symbols_selling()
         managed = set(self.owner)
         today = self.now().astimezone(NY).date()
         for symbol, issues in find_unmanaged_positions(snap.positions, stops, managed).items():
+            if symbol in selling:
+                continue
             pos = snap.positions[symbol]
             sc = self.owner.get(symbol)
             if sc and self.cfg.service.auto_protect and "no stop-loss order at the broker" in issues:

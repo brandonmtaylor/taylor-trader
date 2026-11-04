@@ -66,6 +66,7 @@ class FakeBroker:
         self.is_open = is_open
         self.positions = {}
         self.stops = set()
+        self.selling = set()
         self.orders = []
         self.entries, self.closes, self.stops_placed = [], [], []
         self.order_status = {}
@@ -83,6 +84,9 @@ class FakeBroker:
 
     def symbols_with_stop(self):
         return set(self.stops)
+
+    def symbols_selling(self):
+        return set(self.selling)
 
     def open_orders(self):
         return self.orders
@@ -178,6 +182,14 @@ def test_missing_stop_on_owned_position_is_recreated(svc):
     svc.broker.positions["VRT"] = Position("VRT", 18, 1980, 100)  # $110/share, entry $100
     svc.tick()
     assert svc.broker.stops_placed == [("VRT", 18, 90.0)]
+
+
+def test_position_with_a_sell_waiting_is_left_alone(svc):
+    # Sold from the dashboard after hours: its stop was cancelled on purpose; re-adding one would block the sell.
+    svc.broker.positions["VRT"] = Position("VRT", 18, 1980, 100)
+    svc.broker.selling = {"VRT"}
+    svc.tick()
+    assert svc.broker.stops_placed == [] and svc.broker.closes == []
 
 
 def test_unprotected_position_below_stop_exits_with_critical_alert(svc):
