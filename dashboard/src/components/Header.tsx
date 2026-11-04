@@ -117,7 +117,10 @@ export function Header({ status, setup, now, error, route, onStatus, onSetup }: 
 
       <div className="masthead__row">
         <div className="brand">
-          <span className="brand__name">TaylorTrader</span>
+          <span className="brand__name">
+            <img className="brand__mark" src="/favicon.svg" alt="" width="30" height="30" />
+            TaylorTrader
+          </span>
           <nav className="nav" aria-label="Pages">
             {status?.configured
               ? NAV.map((n) => (

@@ -129,7 +129,8 @@ b { font-weight: 600; }
   margin: 0 auto;
   padding: 10px 24px;
 }
-.brand__name { font-weight: 800; font-size: 20px; letter-spacing: -0.035em; }
+.brand__name { display: inline-flex; align-items: center; gap: 10px; font-weight: 800; font-size: 20px; letter-spacing: -0.035em; }
+.brand__mark { width: 30px; height: 30px; border-radius: 8px; flex: none; }
 
 .pulse { min-width: 0; }
 .trace { display: block; width: 100%; height: 38px; overflow: visible; }
@@ -649,3 +650,7 @@ select.input { width: 100%; }
 .dialog--sell:not(.dialog--live) { border-color: var(--rule); }
 .dialog--sell:not(.dialog--live) .dialog__band { background: var(--ink-2); }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+
+/* the logo's dark tile would vanish into a dark header: give it a hairline edge there */
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .brand__mark { box-shadow: 0 0 0 1px rgb(255 255 255 / 0.14); } }
+:root[data-theme="dark"] .brand__mark { box-shadow: 0 0 0 1px rgb(255 255 255 / 0.14); }
