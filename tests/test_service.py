@@ -440,3 +440,19 @@ def test_daily_summary_html_is_escaped_and_readable(svc):
     assert "4.175e-05" not in text and "0.00004175" in text
     assert "20% of $1,141 is $228" in text and "<script>" not in page and "&lt;script&gt;" in page
     assert "BTCUSD" in page and "not the bot" in page
+
+
+def test_start_ping_is_quiet_and_skipped_right_after_a_settings_restart(svc):
+    def stop(_):
+        raise KeyboardInterrupt
+    svc.sleep = stop
+    sent = []
+    svc.alerts.send = lambda title, message="", level=Level.INFO, **k: sent.append((title, level))
+
+    svc.run_forever()
+    assert sent[0] == ("TaylorTrader started (PAPER)", Level.LOW)  # routine start: listed, silent
+
+    sent.clear()
+    svc.journal.event("restart", "strategies or limits updated")  # the old process said "settings changed"
+    svc.run_forever()
+    assert not any(t.startswith("TaylorTrader started") for t, _ in sent)

@@ -22,12 +22,13 @@ log = logging.getLogger(__name__)
 
 
 class Level(IntEnum):
+    LOW = 2       # ntfy low: listed in the app, no sound or buzz
     INFO = 3      # ntfy default priority
     WARNING = 4   # high
     CRITICAL = 5  # max: breaks through Do Not Disturb if you allow it in the app
 
 
-_NTFY_TAGS = {Level.INFO: "chart_with_upwards_trend", Level.WARNING: "warning", Level.CRITICAL: "rotating_light"}
+_NTFY_TAGS = {Level.LOW: "gear", Level.INFO: "chart_with_upwards_trend", Level.WARNING: "warning", Level.CRITICAL: "rotating_light"}
 
 
 class Notifier:

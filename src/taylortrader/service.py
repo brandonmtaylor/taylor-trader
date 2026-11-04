@@ -110,8 +110,15 @@ class Service:
     def run_forever(self) -> None:
         mode = "DRY RUN" if self.dry_run else self.broker.mode.upper()
         plan = ", ".join(f"{sc.name} {sc.symbols} {sc.timeframe}" for sc in self.cfg.enabled_strategies) or "none"
+        # Starting right after a settings change: that alert already said so; don't ping twice.
+        last = self.journal.db.execute("SELECT kind, ts FROM events ORDER BY id DESC LIMIT 1").fetchone()
+        after_restart = bool(last and last["kind"] == "restart"
+                             and datetime.now(UTC) - datetime.fromisoformat(last["ts"]) < timedelta(minutes=5))
         self.journal.event("start", f"{mode}: {plan}")
-        self.alerts.send(f"TaylorTrader started ({mode})", f"Strategies: {plan}", key="start")
+        if not after_restart:
+            # Routine (a restart, the Mac waking up): silent. Live gets a normal ping every time.
+            self.alerts.send(f"TaylorTrader started ({mode})", f"Strategies: {plan}",
+                             Level.INFO if mode == "LIVE" else Level.LOW, key="start")
         try:
             while True:
                 try:
