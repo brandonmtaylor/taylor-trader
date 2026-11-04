@@ -426,3 +426,17 @@ def test_two_blocks_of_one_strategy_keep_their_own_settings(svc):
         StrategyConfig(name="rsi_14", symbols=["BBB"], params={"rsi_buy": 45})])
     s = Service(cfg, FakeBroker(), FakeData(), svc.journal, svc.alerts, now=lambda: NOW)
     assert s.strategy_for["AAA"].p.rsi_buy == 20 and s.strategy_for["BBB"].p.rsi_buy == 45
+
+
+def test_daily_summary_html_is_escaped_and_readable(svc):
+    from taylortrader import report
+
+    svc.broker.positions["BTCUSD"] = Position("BTCUSD", 0.00004175, 3.25, 0)
+    svc.journal.record_order(mode="paper", strategy="macd_rsi", symbol="VRT", side="buy", status="blocked", qty=0,
+                             reason="<script>alert(1)</script>", detail="20% of $1,141 is $228")
+    svc.journal.db.execute("UPDATE orders SET ts=?", (NOW.isoformat(),))  # "today" on the test clock
+    s = svc.daily_summary(svc.broker.snapshot())
+    text, page = report.text(s), report.html(s)
+    assert "4.175e-05" not in text and "0.00004175" in text
+    assert "20% of $1,141 is $228" in text and "<script>" not in page and "&lt;script&gt;" in page
+    assert "BTCUSD" in page and "not the bot" in page

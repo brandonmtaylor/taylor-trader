@@ -59,12 +59,14 @@ class EmailNotifier(Notifier):
         self.sender, self._password, self.recipients = sender, password, recipients
         self.host, self.port = host, port
 
-    def send(self, title: str, message: str, level: Level = Level.INFO) -> None:
+    def send(self, title: str, message: str, level: Level = Level.INFO, html: str | None = None) -> None:
         msg = EmailMessage()
         msg["Subject"] = f"[TaylorTrader] {title}"
         msg["From"] = self.sender
         msg["To"] = ", ".join(self.recipients)
-        msg.set_content(message)
+        msg.set_content(message)  # plain text: what mail apps without HTML show
+        if html:
+            msg.add_alternative(html, subtype="html")
         with smtplib.SMTP(self.host, self.port, timeout=30) as s:
             s.starttls()
             s.login(self.sender, self._password.get_secret_value())
@@ -103,11 +105,14 @@ class Alerts:
                 log.error("alert via %s failed: %s", type(n).__name__, e)
         return True
 
-    def summary(self, title: str, message: str) -> None:
-        """Daily summary: email, plus a short push."""
+    def summary(self, title: str, message: str, html: str | None = None) -> None:
+        """Daily summary: email (HTML with a plain-text fallback), plus a short push."""
         for n in self.email:
             try:
-                n.send(title, redact(message), Level.INFO)
+                if html and isinstance(n, EmailNotifier):
+                    n.send(title, redact(message), Level.INFO, html=redact(html))
+                else:
+                    n.send(title, redact(message), Level.INFO)
             except Exception as e:  # noqa: BLE001
                 log.error("summary email failed: %s", e)
         first_lines = "\n".join(message.splitlines()[:6])

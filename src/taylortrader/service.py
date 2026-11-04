@@ -22,7 +22,7 @@ from zoneinfo import ZoneInfo
 import pandas as pd
 
 from guardrails import Guardrails, find_unmanaged_positions
-from taylortrader import indicators
+from taylortrader import indicators, report, stats
 from taylortrader.alerts import Alerts, Level
 from taylortrader.config import Config, StrategyConfig
 from taylortrader.executor import Executor
@@ -352,34 +352,33 @@ class Service:
         if self.journal.db.execute("SELECT 1 FROM events WHERE kind='summary' AND message=?",
                                    (str(today),)).fetchone():
             return  # already sent today (e.g. the service restarted after the close)
-        self.alerts.summary(f"Daily summary {today}", self.daily_summary_text(snap))
+        summary = self.daily_summary(snap)
+        self.alerts.summary(f"Daily summary {today}", report.text(summary), report.html(summary))
         self.journal.event("summary", str(today))
 
-    def daily_summary_text(self, snap) -> str:
-        start = datetime.combine(self.now().astimezone(NY).date(), datetime.min.time(), NY).astimezone(UTC)
-        orders = self.journal.orders_since(start.isoformat())
-        errors = [e for e in self.journal.events_since(start.isoformat()) if e["level"] in ("error", "warning")]
+    def daily_summary(self, snap) -> report.Summary:
+        today = self.now().astimezone(NY).date()
+        start = datetime.combine(today, datetime.min.time(), NY).astimezone(UTC)
+        orders = [dict(o) for o in self.journal.orders_since(start.isoformat())]
+        problems = [dict(e) for e in self.journal.events_since(start.isoformat()) if e["level"] in ("error", "warning")]
         stops = self.broker.symbols_with_stop()
-        mode = "DRY RUN" if self.dry_run else self.broker.mode.upper()
-        lines = [
-            f"[{mode}] Equity ${snap.equity:,.2f} ({snap.day_pnl_pct:+.2f}% today), cash ${snap.cash:,.2f}",
-            f"Kill switch: {'ON' if self.kill_on else 'off'}. Orders today: {len(orders)}. Problems today: {len(errors)}.",
-            "",
-            "Positions:" if snap.positions else "Positions: none",
-        ]
-        for p in snap.positions.values():
-            owner = self.owner.get(p.symbol)
-            lines.append(f"  {p.symbol}: {p.qty:g} sh, ${p.market_value:,.2f}, avg ${p.avg_entry_price:,.2f}, "
-                         f"stop {'yes' if p.symbol in stops else 'NO'}, "
-                         f"{'managed by ' + owner.name if owner else 'unmanaged'}")
-        if orders:
-            lines += ["", "Orders:"] + [
-                f"  {o['ts'][11:16]} {o['side']} {o['symbol']} {o['qty'] or ''} [{o['status']}] {o['reason']}"
-                for o in orders]
-        if errors:
-            lines += ["", "Problems:"] + [f"  {e['ts'][11:16]} {e['kind']}: {e['message']}" for e in errors[:20]]
-        lines += ["", "If you stop getting this summary on trading days, TaylorTrader isn't running."]
-        return "\n".join(lines)
+        closed = None
+        try:  # trades closed today, from Alpaca's fills (includes stop-loss fills)
+            fills = self.broker.fills(days=60)
+            strategy_of = {r["broker_order_id"]: r["strategy"] for r in self.journal.db.execute(
+                "SELECT broker_order_id, strategy FROM orders WHERE side='buy' AND broker_order_id IS NOT NULL")}
+            closed = stats.results(fills, strategy_of, self.now())["bot"]["today"]
+        except Exception as e:  # noqa: BLE001  the summary goes out without it
+            log.warning("results for the summary unavailable: %s", e)
+        positions = [report.PositionLine(p.symbol, p.qty, p.market_value, p.avg_entry_price, p.symbol in stops,
+                                         self.owner[p.symbol].name if p.symbol in self.owner else None)
+                     for p in sorted(snap.positions.values(), key=lambda p: -abs(p.market_value))]
+        return report.Summary(day=today, mode="DRY RUN" if self.dry_run else self.broker.mode.upper(),
+                              equity=snap.equity, day_pnl_pct=snap.day_pnl_pct, cash=snap.cash, kill_on=self.kill_on,
+                              positions=positions, orders=orders, problems=problems, closed=closed)
+
+    def daily_summary_text(self, snap) -> str:
+        return report.text(self.daily_summary(snap))
 
 
 # --- watchdog (separate process) ---------------------------------------------------------------
