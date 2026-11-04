@@ -42,7 +42,7 @@ class Limits:
 
 # The ceiling nothing can exceed. Changing these is a code change, reviewed on purpose.
 HARD_LIMITS = Limits(
-    max_position_pct=50.0,
+    max_position_pct=100.0,
     max_total_exposure_pct=100.0,
     max_daily_loss_pct=10.0,
     max_trades_per_day=50,
