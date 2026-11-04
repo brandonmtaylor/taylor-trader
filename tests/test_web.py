@@ -154,7 +154,7 @@ def test_save_settings_validates_writes_and_keeps_backup(client):
     (lambda c: c["strategies"][0].update(stop_loss_pct=30), "stop-loss"),
     (lambda c: c["strategies"][0].update(symbols=["NOT A TICKER"]), "ticker"),
     (lambda c: c["strategies"][0].update(name="nope"), "unknown strategy"),
-    (lambda c: c["guardrails"].update(max_position_pct=80), "hard limit"),
+    (lambda c: c["guardrails"].update(max_daily_loss_pct=20), "hard limit"),
     (lambda c: c["alerts"].update(api_key="x"), "looks like a secret"),
     (lambda c: c["strategies"].append(dict(c["strategies"][0])), "used by both"),
 ])

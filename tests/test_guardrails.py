@@ -71,7 +71,7 @@ def test_no_margin():
 
 def test_config_cannot_loosen_hard_limits():
     with pytest.raises(LimitsError):
-        Limits.from_config({"max_position_pct": 97})
+        Limits.from_config({"max_daily_loss_pct": 20})
     with pytest.raises(LimitsError):
         Limits.from_config({"max_daily_loss_pct": 0})
     with pytest.raises(LimitsError):
