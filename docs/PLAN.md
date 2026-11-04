@@ -93,3 +93,6 @@ stop, alerts reach my phone, and paper results roughly match the backtest for th
 ### M4: MCP server and open-source release
 - Tools for status, positions, journal, backtests, pause/kill switch
 - Public repo, README, demo, docs; blog series links to it
+- Before going public: settle the license (AGPL for the core if a hosted service is likely) and the
+  product name (TaylorTrader reads like a person who trades, and clashes with the "Taylor Trading
+  Technique"; check domain, GitHub and a basic trademark search)
