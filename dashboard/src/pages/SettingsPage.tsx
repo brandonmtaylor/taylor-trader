@@ -227,9 +227,18 @@ function ServiceSection({ store, setup, onSetup }: { store: SettingsStore; setup
   );
 }
 
-const MODEL_HINTS: Record<"anthropic" | "openai", string[]> = {
+type Provider = "anthropic" | "openai" | "claude-code";
+
+const MODEL_HINTS: Record<Provider, string[]> = {
   anthropic: ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"],
   openai: ["gpt-5", "gpt-5-mini", "llama3.1", "qwen2.5"],
+  "claude-code": ["sonnet", "opus", "haiku"],
+};
+
+const MODEL_HINT_TEXT: Record<Provider, string> = {
+  anthropic: "Opus is the most capable; Sonnet and Haiku cost less per call.",
+  openai: "The model name your provider or local server uses.",
+  "claude-code": "sonnet uses less of your plan's limits than opus; haiku is lightest.",
 };
 
 function AISection({ store, setup, onSetup }: { store: SettingsStore; setup: Setup; onSetup: (s: Setup) => void }) {
@@ -237,15 +246,17 @@ function AISection({ store, setup, onSetup }: { store: SettingsStore; setup: Set
   const test = useAction();
   if (!s.draft) return null;
   const d = s.draft;
-  const setProvider = (provider: "anthropic" | "openai") => {
-    const keep = MODEL_HINTS[provider].includes(d.model) || (provider === "openai" && !d.model.startsWith("claude-"));
+  const setProvider = (provider: Provider) => {
+    const keep = MODEL_HINTS[provider].includes(d.model)
+      || (provider === "openai" && !d.model.startsWith("claude-") && !MODEL_HINTS["claude-code"].includes(d.model));
     s.setDraft({ ...d, provider, model: keep ? d.model : MODEL_HINTS[provider][0] });
   };
   return (
     <Section id="ai" title="AI model" sub="Used by AI strategies (experimental). The model only proposes buy, sell or hold; your safety limits and stop-losses still apply to everything it does.">
       <div className="choices" role="radiogroup" aria-label="AI provider">
         {([
-          ["anthropic", "Claude (Anthropic)", "Anthropic's models. Answers are guaranteed to match the decision format."],
+          ["claude-code", "Claude subscription", "Uses Claude Code on this Mac and the Pro or Max plan it's logged in with. No API key; calls count toward your plan's limits."],
+          ["anthropic", "Claude API", "Anthropic's API with a key, billed per call. Best for running unattended or with real money."],
           ["openai", "OpenAI-compatible", "OpenAI, OpenRouter, Groq, Together, or a model on this computer through Ollama or LM Studio (free, no key)."],
         ] as const).map(([id, title, text]) => (
           <label key={id} className={`choice ${d.provider === id ? "choice--on" : ""}`}>
@@ -255,7 +266,7 @@ function AISection({ store, setup, onSetup }: { store: SettingsStore; setup: Set
         ))}
       </div>
       <div className="grid-fields" style={{ marginTop: 16 }}>
-        <Labeled label="Model" hint={d.provider === "anthropic" ? "Opus is the most capable; Sonnet and Haiku cost less per call." : "The model name your provider or local server uses."}
+        <Labeled label="Model" hint={MODEL_HINT_TEXT[d.provider]}
           render={(id) => (
             <>
               <input id={id} className="input input--mono" list={`${id}-models`} spellCheck={false} value={d.model}
@@ -283,10 +294,14 @@ function AISection({ store, setup, onSetup }: { store: SettingsStore; setup: Set
       <SaveRow dirty={s.dirty} busy={s.act.busy} onSave={() => s.save("Saved.")} onReset={s.reset} />
       <NoticeLine notice={s.act.notice} />
 
-      <SecretField key={d.provider} name={d.provider === "anthropic" ? "ANTHROPIC_API_KEY" : "OPENAI_API_KEY"}
+      {d.provider === "claude-code" ? (
+        <p className="note">
+          No key needed. If the test below says Claude Code isn't logged in, run <code>claude</code> in Terminal once and log in.
+        </p>
+      ) : <SecretField key={d.provider} name={d.provider === "anthropic" ? "ANTHROPIC_API_KEY" : "OPENAI_API_KEY"}
         label={d.provider === "anthropic" ? "Anthropic API key" : "API key (not needed for a local model)"}
         hint={d.provider === "anthropic" ? "From console.anthropic.com → API keys." : "From your provider's dashboard."}
-        setup={setup} onSaved={onSetup} placeholder={d.provider === "anthropic" ? "sk-ant-…" : "sk-…"} />
+        setup={setup} onSaved={onSetup} placeholder={d.provider === "anthropic" ? "sk-ant-…" : "sk-…"} />}
 
       <div className="saverow">
         <button type="button" className="btn" disabled={test.busy || s.dirty}

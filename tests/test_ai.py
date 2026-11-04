@@ -209,3 +209,49 @@ def test_missing_claude_key_is_a_plain_message(monkeypatch):
     monkeypatch.setattr(client.client.beta.messages, "create", no_auth)
     with pytest.raises(llm.LLMError, match="No Anthropic API key"):
         client.ask("s", "u", ("buy", "hold"))
+
+
+# --- Claude Code (subscription) -------------------------------------------------------------------------
+
+def _fake_claude(tmp_path, stdout: str, code: int = 0):
+    """A stand-in `claude` that swallows the prompt and prints a canned reply."""
+    import stat
+
+    reply = tmp_path / f"reply{code}{len(stdout)}.txt"
+    reply.write_text(stdout)
+    script = tmp_path / f"claude{code}{len(stdout)}"
+    script.write_text(f"#!/bin/sh\ncat > /dev/null\ncat '{reply}'\nexit {code}\n")
+    script.chmod(script.stat().st_mode | stat.S_IEXEC)
+    return str(script)
+
+
+def test_claude_code_reads_structured_output(tmp_path):
+    import json as _json
+
+    out = _json.dumps({"is_error": False, "structured_output": {**BUY, "action": "hold"}, "result": "",
+                       "modelUsage": {"claude-sonnet-5-5": {}}, "usage": {"input_tokens": 3, "cache_read_input_tokens": 900,
+                                                                       "output_tokens": 50}})
+    d = llm.ClaudeCodeLLM("sonnet", binary=_fake_claude(tmp_path, out)).ask("s", "u", ("buy", "hold"))
+    assert d.action == "hold" and d.model == "claude-sonnet-5-5 (Claude Code)" and d.input_tokens == 903
+
+
+def test_claude_code_failures_are_plain_errors(tmp_path):
+    import json as _json
+
+    limit = _json.dumps({"is_error": True, "result": "Claude usage limit reached. Resets at 5pm"})
+    with pytest.raises(llm.LLMError, match="usage limit"):
+        llm.ClaudeCodeLLM(binary=_fake_claude(tmp_path, limit)).ask("s", "u", ("buy", "hold"))
+    with pytest.raises(llm.LLMError, match="logged in"):
+        llm.ClaudeCodeLLM(binary=_fake_claude(tmp_path, "Invalid API key · Please run /login", 1)).ask("s", "u", ("buy", "hold"))
+    off_menu = _json.dumps({"is_error": False, "structured_output": {**BUY, "action": "sell"}})
+    with pytest.raises(llm.LLMError, match="only buy or hold"):
+        llm.ClaudeCodeLLM(binary=_fake_claude(tmp_path, off_menu)).ask("s", "u", ("buy", "hold"))
+
+
+def test_model_name_cant_smuggle_flags():
+    from taylortrader.config import Config, config_to_dict
+
+    base = config_to_dict(Config())
+    with pytest.raises(ConfigError, match="model name"):
+        parse_config({**base, "ai": {**base["ai"], "provider": "claude-code", "model": "--dangerously-skip-permissions"}})
+    assert parse_config({**base, "ai": {**base["ai"], "provider": "claude-code", "model": "sonnet"}}).ai.provider == "claude-code"

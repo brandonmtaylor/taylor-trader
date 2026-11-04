@@ -54,7 +54,8 @@ class ServiceConfig:
 @dataclass(frozen=True)
 class AIConfig:
     """The model AI strategies ask. API keys live in the Keychain/.env, never here."""
-    provider: str = "anthropic"       # "anthropic" (Claude) or "openai" (any OpenAI-compatible API)
+    provider: str = "anthropic"       # "anthropic" (Claude API), "openai" (any OpenAI-compatible API),
+                                      # or "claude-code" (Claude Code CLI on your subscription)
     model: str = "claude-opus-5-5"
     endpoint: str = ""                # OpenAI-compatible only, e.g. http://localhost:11434/v1 for Ollama
     effort: str = "medium"            # Claude only: low, medium, high, xhigh, max
@@ -185,8 +186,8 @@ def parse_config(raw: dict[str, Any]) -> Config:
         raise ConfigError(f"[ai] provider must be one of {PROVIDERS}")
     if ai.effort not in EFFORTS:
         raise ConfigError(f"[ai] effort must be one of {EFFORTS}")
-    if not str(ai.model).strip():
-        raise ConfigError("[ai] model can't be empty")
+    if not re.match(r"^[A-Za-z0-9][A-Za-z0-9._:/@-]{0,99}$", str(ai.model)):
+        raise ConfigError("[ai] model must be a model name like claude-opus-5-5, sonnet or llama3.1")
     if ai.endpoint and not re.match(r"^https?://[^\s]+$", ai.endpoint):
         raise ConfigError("[ai] endpoint must be an http(s) address")
     if not 1 <= int(ai.max_calls_per_day) <= 2000:

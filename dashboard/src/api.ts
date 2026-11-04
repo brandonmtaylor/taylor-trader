@@ -171,7 +171,7 @@ export interface ConfigDict {
 }
 
 export interface AISettings {
-  provider: "anthropic" | "openai";
+  provider: "anthropic" | "openai" | "claude-code";
   model: string;
   endpoint: string;
   effort: "low" | "medium" | "high" | "xhigh" | "max";

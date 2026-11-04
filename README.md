@@ -76,10 +76,17 @@ Built-ins are ported from the original bot: `macd_rsi`, `macd`, `ma_20`, `rsi_14
 belongs to one strategy so it's always clear who manages a position.
 
 ## AI strategy (experimental)
-`ai` asks a language model whether to buy, sell or hold. It works with Claude (Anthropic SDK,
-structured outputs, so answers always match the decision format) or any OpenAI-compatible API:
-OpenAI, OpenRouter, Groq, or a free local model through Ollama or LM Studio. Set it up under
-Settings → AI model, then add an `ai` strategy with plain-English instructions.
+`ai` asks a language model whether to buy, sell or hold. It works with:
+
+- **Claude subscription**: if [Claude Code](https://claude.com/claude-code) is installed and
+  logged in to a Pro or Max plan, each question is a one-shot `claude -p` (no tools, no MCP,
+  none of your own settings, run in an empty folder). No API key; calls count toward your plan.
+- **Claude API**: the Anthropic SDK with structured outputs, so answers always match the
+  decision format. Billed per call; the sturdier choice for running unattended or with real money.
+- **Any OpenAI-compatible API**: OpenAI, OpenRouter, Groq, or a free local model through Ollama
+  or LM Studio.
+
+Set it up under Settings → AI model, then add an `ai` strategy with plain-English instructions.
 
 - Each question includes your instructions, recent bars, indicators, and (optionally) the last
   3 days of Alpaca news, which the model is told to treat as information, never instructions.

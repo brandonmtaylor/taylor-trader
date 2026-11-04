@@ -1,10 +1,12 @@
 """Ask a language model for one trading decision, in a fixed JSON shape.
 
-Two connectors cover nearly every model:
+Three connectors cover nearly every model:
 - "anthropic": Claude through the official SDK, with structured outputs (the reply is
   guaranteed to match the schema) and server-side fallback if a request is declined.
 - "openai": anything that speaks the OpenAI chat API: OpenAI, OpenRouter, Groq, Together,
   and local models through Ollama or LM Studio (point `endpoint` at them; no key needed locally).
+- "claude-code": Claude through the Claude Code CLI (`claude -p`), using the subscription it's
+  logged in with. No API key; calls count toward that plan's usage limits.
 
 Whatever comes back is validated again here. A malformed or off-menu answer is an error,
 never a trade.
@@ -20,9 +22,9 @@ from dataclasses import dataclass, field
 
 log = logging.getLogger(__name__)
 
-PROVIDERS = ("anthropic", "openai")
+PROVIDERS = ("anthropic", "openai", "claude-code")
 EFFORTS = ("low", "medium", "high", "xhigh", "max")
-DEFAULT_MODEL = {"anthropic": "claude-opus-5-5", "openai": "gpt-5"}
+DEFAULT_MODEL = {"anthropic": "claude-opus-5-5", "openai": "gpt-5", "claude-code": "sonnet"}
 # Models that accept fallbacks: "default" (server-side retry on another model after a decline).
 _FALLBACK_MODELS = ("claude-opus-5-5", "claude-opus-5", "claude-fable-5-1", "claude-sonnet-5-5")
 
@@ -194,6 +196,79 @@ class OpenAICompatLLM:
         return d
 
 
+class ClaudeCodeLLM:
+    """Claude through the Claude Code CLI, on the subscription it's logged in with.
+
+    Each call is a one-shot `claude -p` with no tools, no MCP servers, no settings and no saved
+    session, run in an empty folder, so nothing from your own Claude Code setup leaks in and the
+    model can't do anything but answer. The CLI validates the reply against SCHEMA.
+    """
+
+    SEARCH = ("~/.local/bin/claude", "~/.claude/local/claude", "/opt/homebrew/bin/claude", "/usr/local/bin/claude")
+
+    def __init__(self, model: str = "sonnet", effort: str = "medium", timeout: float = 120, binary: str | None = None):
+        self.model, self.effort, self.timeout = model, effort, timeout
+        self.binary = binary or self.find()
+
+    @classmethod
+    def find(cls) -> str:
+        """launchd runs the service with a bare PATH, so look in the usual install places too."""
+        import os
+        import shutil
+
+        found = shutil.which("claude") or next(
+            (p for p in map(os.path.expanduser, cls.SEARCH) if os.access(p, os.X_OK)), None)
+        if not found:
+            raise LLMError("Claude Code isn't installed (no `claude` command). Install it from "
+                           "claude.com/claude-code, or pick another AI provider.")
+        return found
+
+    def ask(self, system: str, user: str, allowed: tuple[str, ...]) -> Decision:
+        import os
+        import subprocess
+        import tempfile
+
+        cmd = [self.binary, "-p", "--system-prompt", system, "--tools", "", "--strict-mcp-config",
+               "--setting-sources", "", "--no-session-persistence", "--output-format", "json",
+               "--json-schema", json.dumps(SCHEMA), "--model", self.model, "--effort", self.effort]
+        # Use the subscription login: an API key in the environment would take precedence over it.
+        env = {k: v for k, v in os.environ.items() if k not in ("ANTHROPIC_API_KEY", "CLAUDECODE")}
+        t0 = time.monotonic()
+        with tempfile.TemporaryDirectory(prefix="taylortrader-ai-") as empty:
+            try:
+                p = subprocess.run(cmd, input=user, capture_output=True, text=True, cwd=empty, env=env, check=False,
+                                   timeout=self.timeout)
+            except subprocess.TimeoutExpired:
+                raise LLMError(f"Claude Code didn't answer within {self.timeout:g}s") from None
+        try:
+            out = json.loads(p.stdout)
+            if not isinstance(out, dict):
+                raise json.JSONDecodeError("not an object", p.stdout, 0)
+        except json.JSONDecodeError:
+            detail = (p.stderr or p.stdout or "").strip().splitlines()
+            hint = detail[-1][:200] if detail else f"exit code {p.returncode}"
+            if any(w in hint.lower() for w in ("log in", "login", "/login", "not logged", "authenticat")):
+                raise LLMError("Claude Code isn't logged in. Run `claude` in Terminal once and log in.") from None
+            raise LLMError(f"Claude Code failed: {hint}") from None
+        if out.get("is_error"):
+            msg = str(out.get("result") or out.get("subtype") or "unknown error")[:200]
+            if any(w in msg.lower() for w in ("limit", "usage", "quota")):
+                raise LLMError(f"Claude Code hit your plan's usage limit; will try again later ({msg})")
+            raise LLMError(f"Claude Code error: {msg}")
+        raw = out.get("structured_output")
+        if raw is None:
+            raw = _parse_json_text(str(out.get("result") or ""))
+        d = validate(raw, allowed)
+        d.latency_ms = int((time.monotonic() - t0) * 1000)
+        used = out.get("modelUsage") or {}
+        d.model = next(iter(used), self.model) + " (Claude Code)"
+        u = out.get("usage") or {}
+        d.input_tokens = sum(int(u.get(k) or 0) for k in
+                             ("input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens")) or None
+        d.output_tokens = u.get("output_tokens")
+        return d
+
+
 def build(provider: str, model: str, endpoint: str, effort: str, timeout: float, dotenv_path=None):
     """The configured model client. Keys come from the Keychain/.env/environment, never config."""
     from taylortrader.secrets import get_secret
@@ -206,4 +281,6 @@ def build(provider: str, model: str, endpoint: str, effort: str, timeout: float,
         if key is None and not endpoint:
             raise LLMError("Add an OpenAI API key, or set an endpoint for a local model (Settings → AI)")
         return OpenAICompatLLM(model, key.get_secret_value() if key else None, endpoint, timeout)
+    if provider == "claude-code":
+        return ClaudeCodeLLM(model or "sonnet", effort, timeout)
     raise LLMError(f"unknown AI provider {provider!r}")
