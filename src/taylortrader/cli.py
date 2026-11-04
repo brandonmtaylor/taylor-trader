@@ -11,6 +11,7 @@
   journal [--import-legacy DB]   recent orders; optionally import the original bot's trades
   install-service [--dry-run]    write launchd agents (the dashboard can also start/stop the service)
   dashboard [--port 8787]        setup, settings and status at http://127.0.0.1:8787 (this machine only)
+  mcp                            MCP server over stdio, for Claude Code or the Claude desktop app
 """
 
 from __future__ import annotations
@@ -262,6 +263,13 @@ def cmd_dashboard(args) -> int:
     return 0
 
 
+def cmd_mcp(args) -> int:
+    from taylortrader.mcp_server import main as serve
+
+    serve(args.config)
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="taylortrader", description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -305,6 +313,7 @@ def main(argv: list[str] | None = None) -> int:
     dash.add_argument("--port", type=int, default=8787)
     dash.add_argument("--no-open", action="store_true", help="don't open a browser tab")
     dash.set_defaults(fn=cmd_dashboard)
+    sub.add_parser("mcp", help="MCP server over stdio (started by Claude, not by you)").set_defaults(fn=cmd_mcp)
 
     argv = sys.argv[1:] if argv is None else argv
     if not any(a in sub.choices for a in argv) and not any(a in ("-h", "--help") for a in argv):

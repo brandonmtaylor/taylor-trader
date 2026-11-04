@@ -91,7 +91,9 @@ stop, alerts reach my phone, and paper results roughly match the backtest for th
 - Small amount of money, tight limits; raise them only as results earn it
 
 ### M4: MCP server and open-source release
-- Tools for status, positions, journal, backtests, pause/kill switch
+- ✅ Local MCP server (`taylortrader mcp`, stdio): status, account, results, orders, log, AI decisions,
+  strategies, backtests; change strategies and limits; pause; dry run/paper; sell with exact
+  confirmation. Never: go live, keys. Same validation as the dashboard, journaled as from Claude
 - Public repo, README, demo, docs; blog series links to it
 - Before going public: settle the license (AGPL for the core if a hosted service is likely) and the
   product name (TaylorTrader reads like a person who trades, and clashes with the "Taylor Trading

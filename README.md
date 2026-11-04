@@ -102,5 +102,19 @@ Set it up under Settings → AI model, then add an `ai` strategy with plain-Engl
 For UI work: `uv run taylortrader dashboard --no-open` plus `TAYLORTRADER_DEV=1` and `npm run dev`
 in `dashboard/` (Vite proxies `/api` to it).
 
+## Talk to it from Claude (MCP)
+TaylorTrader includes an MCP server, so Claude Code or the Claude desktop app can check on the bot
+and adjust it: "how did the AI strategy do this week?", "move PLTR to macd_rsi", "backtest rsi_14
+on NVDA hourly", "pause new buys".
+
+```sh
+claude mcp add taylortrader --scope user -- uv --directory /path/to/taylor-trader run taylortrader mcp
+```
+
+It runs on your Mac and uses the same rules as the dashboard: every change is validated, hard
+limits still apply, and changes are logged as coming from Claude. Selling needs the exact
+confirmation (the symbol, or `SELL ALL`). It can't switch to live trading or read or change keys;
+those stay in the dashboard.
+
 ## License
 Apache-2.0
