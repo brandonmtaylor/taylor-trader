@@ -265,8 +265,8 @@ def test_sell_one_position_is_journaled(client):
 
 
 def test_sell_everything_needs_phrase_pauses_and_keeps_going(client):
-    cancelled = []
-    client.broker.cancel_all_orders = lambda: cancelled.append(True)
+    cancelled = []  # how many sells had gone out when the cancel ran
+    client.broker.cancel_all_orders = lambda: cancelled.append(len(client.broker.closes))
     assert client.post("/api/positions/sell-all", json={"confirm": "yes"}, headers=WRITE).status_code == 422
     assert client.broker.closes == [] and not kill_file(client.rt.settings).exists()
 
@@ -279,7 +279,8 @@ def test_sell_everything_needs_phrase_pauses_and_keeps_going(client):
     client.broker.close_position = close
     out = client.post("/api/positions/sell-all", json={"confirm": "SELL ALL"}, headers=WRITE).json()
     assert [s["symbol"] for s in out["sold"]] == ["VRT"] and out["failed"][0]["symbol"] == "AAPL"
-    assert kill_file(client.rt.settings).exists() and cancelled == [True]
+    # Cancel before selling: afterwards it would cancel the sells queued for the next open.
+    assert kill_file(client.rt.settings).exists() and cancelled == [0]
 
 
 def test_results_pair_fills_and_credit_the_strategy(client):

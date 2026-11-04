@@ -479,24 +479,28 @@ def create_app(rt: Runtime, cache_ttl: float = 10.0, project: Path = PROJECT) ->
 
     @app.post("/api/positions/sell-all", dependencies=[Depends(guard)])
     def sell_everything(body: SellAllBody) -> dict[str, Any]:
-        """Pause new buys, sell every position in the account, then cancel whatever orders are left."""
+        """Pause new buys, cancel every open order, then sell every position in the account.
+
+        Cancelling comes first: done last, it would also cancel the sells themselves, which wait
+        as open orders until the next open when the market is closed.
+        """
         if body.confirm.strip() != SELL_ALL_PHRASE:
             raise HTTPException(422, f"Type {SELL_ALL_PHRASE} to confirm.")
         broker = need_broker()
         path = kill_file(rt.settings)  # first, so the bot can't buy back in while this runs
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(f"paused by sell everything at {datetime.now(UTC).isoformat()}\n")
-        positions = _broker_call(broker.snapshot).positions
         sold, failed = [], []
+        try:
+            broker.cancel_all_orders()
+        except Exception as e:  # noqa: BLE001 - the sells still try; close_position cancels per symbol too
+            failed.append({"symbol": "open orders", "error": f"couldn't cancel: {str(e)[:200]}"})
+        positions = _broker_call(broker.snapshot).positions
         for symbol, pos in sorted(positions.items()):
             try:
                 sold.append(sell(broker, symbol, pos, "sell everything, from the dashboard"))
             except Exception as e:  # noqa: BLE001 - keep going: one refusal mustn't stop the rest
                 failed.append({"symbol": symbol, "error": str(e)[:200]})
-        try:
-            broker.cancel_all_orders()
-        except Exception as e:  # noqa: BLE001
-            failed.append({"symbol": "open orders", "error": f"couldn't cancel: {str(e)[:200]}"})
         names = ", ".join(s["symbol"] for s in sold) or "nothing"
         rt.journal.event("sell_all", f"sell everything from the dashboard: selling {names}; new buys paused"
                          + (f"; {len(failed)} failed" if failed else ""), "error" if failed else "warning")

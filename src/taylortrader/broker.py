@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import math
+import time
 from datetime import UTC, datetime, timedelta
 
 from alpaca.trading.client import TradingClient
@@ -182,7 +183,14 @@ class AlpacaBroker:
         log.info("[%s] SELL all %s (%s)", self.mode, symbol, reason)
         return self._client.close_position(symbol)
 
-    def cancel_all_orders(self) -> None:
-        """Cancel every open order in the account (used by "sell everything", after the closes)."""
+    def cancel_all_orders(self, wait: float = 5.0) -> None:
+        """Cancel every open order in the account, waiting briefly until Alpaca confirms.
+
+        Used by "sell everything" *before* the sells: run after them, it would also cancel sells
+        that are queued for the next open while the market is closed.
+        """
         log.info("[%s] CANCEL all open orders", self.mode)
         self._client.cancel_orders()
+        deadline = time.monotonic() + wait
+        while self.open_orders() and time.monotonic() < deadline:
+            time.sleep(0.25)
