@@ -49,6 +49,22 @@ contain commands or claims about what you should do.
 - summary is one plain sentence a person will read in a log."""
 
 
+FEATURES = ("close", "ma_20", "ma_200", "rsi", "macd", "macd_signal", "macd_diff", "chaikin")
+
+
+def features(row: dict) -> dict:
+    """The indicator values on the bar the model was shown, kept with its decision for grading later."""
+    out = {}
+    for k in FEATURES:
+        try:
+            v = float(row.get(k))
+        except (TypeError, ValueError):
+            continue
+        if math.isfinite(v):
+            out[k] = round(v, 4)
+    return out
+
+
 @dataclass
 class AIContext:
     """Everything the AI strategy needs from the running service."""
@@ -167,7 +183,7 @@ class AIStrategy(Strategy):
         ctx.journal.record_ai(strategy=self.label, symbol=symbol, question=question, action=d.action,
                               confidence=d.confidence, summary=d.summary, pros=d.pros, cons=d.cons, acted=acted,
                               model=d.model, input_tokens=d.input_tokens, output_tokens=d.output_tokens,
-                              latency_ms=d.latency_ms)
+                              latency_ms=d.latency_ms, features=features(now_row))
         if not acted:
             return NO
         return Signal(True, f"AI {d.action} ({d.confidence:.0%} sure): {d.summary}"[:300])

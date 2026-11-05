@@ -7,6 +7,7 @@ export const money0 = (n: number | null | undefined) => (n == null ? "—" : usd
 export function pct(n: number | null | undefined, signed = true, digits = 2): string {
   if (n == null || Number.isNaN(n)) return "—";
   const s = n.toFixed(digits);
+  if (Number(s) === 0) return `${(0).toFixed(digits)}%`; // not "-0.0%"
   return signed && n > 0 ? `+${s}%` : `${s}%`;
 }
 

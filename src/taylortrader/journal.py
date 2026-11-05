@@ -66,7 +66,8 @@ CREATE TABLE IF NOT EXISTS ai_decisions (
     input_tokens INTEGER,
     output_tokens INTEGER,
     latency_ms INTEGER,
-    error TEXT
+    error TEXT,
+    features TEXT                    -- JSON: the indicator values the model was shown
 );
 CREATE INDEX IF NOT EXISTS ai_decisions_ts ON ai_decisions(ts);
 """
@@ -84,6 +85,13 @@ class Journal:
         self.db.row_factory = sqlite3.Row
         self.db.execute("PRAGMA journal_mode=WAL")
         self.db.executescript(SCHEMA)
+        self._add_columns()
+
+    def _add_columns(self) -> None:
+        """Columns added after the first release, for journals created before them."""
+        have = {r["name"] for r in self.db.execute("PRAGMA table_info(ai_decisions)")}
+        if "features" not in have:
+            self.db.execute("ALTER TABLE ai_decisions ADD COLUMN features TEXT")
 
     # --- orders --------------------------------------------------------------------------------
 
@@ -142,12 +150,15 @@ class Journal:
                   confidence: float | None = None, summary: str = "", pros: list[str] | None = None,
                   cons: list[str] | None = None, acted: bool = False, model: str = "",
                   input_tokens: int | None = None, output_tokens: int | None = None,
-                  latency_ms: int | None = None, error: str | None = None) -> None:
+                  latency_ms: int | None = None, error: str | None = None,
+                  features: dict | None = None) -> None:
         self.db.execute(
             "INSERT INTO ai_decisions (ts, strategy, symbol, question, action, confidence, summary, pros, cons,"
-            " acted, model, input_tokens, output_tokens, latency_ms, error) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            " acted, model, input_tokens, output_tokens, latency_ms, error, features)"
+            " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (now_iso(), strategy, symbol, question, action, confidence, summary, json.dumps(pros or []),
-             json.dumps(cons or []), int(acted), model, input_tokens, output_tokens, latency_ms, error),
+             json.dumps(cons or []), int(acted), model, input_tokens, output_tokens, latency_ms, error,
+             json.dumps(features) if features else None),
         )
 
     def ai_calls_since(self, ts_iso: str) -> int:
@@ -157,7 +168,8 @@ class Journal:
 
     def recent_ai(self, limit: int = 50) -> list[dict]:
         rows = self.db.execute("SELECT * FROM ai_decisions ORDER BY id DESC LIMIT ?", (limit,))
-        return [{**dict(r), "pros": json.loads(r["pros"] or "[]"), "cons": json.loads(r["cons"] or "[]")}
+        return [{**dict(r), "pros": json.loads(r["pros"] or "[]"), "cons": json.loads(r["cons"] or "[]"),
+                 "features": json.loads(r["features"]) if r["features"] else None}
                 for r in rows]
 
     # --- legacy import -------------------------------------------------------------------------

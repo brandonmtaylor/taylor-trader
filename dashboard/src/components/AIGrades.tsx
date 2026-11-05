@@ -85,6 +85,33 @@ export function AIGrades({ grades, error }: { grades: Grades | null; error: stri
           )}
         </>
       )}
+      {g && g.graded > 0 && (
+        <details className="ai__why">
+          <summary>By market conditions</summary>
+          <p className="note">
+            How the AI's calls did depending on the indicators when it was asked. Percentages appear once a
+            condition has {g.min_slice} graded calls; fewer than that is luck either way.
+            {g.recalculated > 0 && ` Values for ${g.recalculated} older call${g.recalculated === 1 ? " were" : "s were"} recalculated from price history.`}
+          </p>
+          {g.by_indicator.map((grp) => (
+            <table key={grp.group} className="table table--tight table--conds">
+              <thead>
+                <tr><th>{grp.group}</th><th className="num">Calls</th><th className="num">Right</th><th className="num">Next day</th></tr>
+              </thead>
+              <tbody>
+                {grp.slices.map((sl) => (
+                  <tr key={sl.label} className={sl.enough ? "" : "is-thin"}>
+                    <td>{sl.label}</td>
+                    <td className="num">{sl.n}</td>
+                    <td className="num">{sl.enough ? acc(sl) : <span className="muted">{sl.n === 0 ? "—" : `needs ${g.min_slice}`}</span>}</td>
+                    <td className="num">{sl.enough ? pct(sl.avg_ret, true, 1) : <span className="muted">—</span>}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          ))}
+        </details>
+      )}
       {g && g.recent.length > 0 && (
         <details className="ai__why">
           <summary>Recent calls and how they turned out{g.pending > 0 ? ` (${g.pending} waiting)` : ""}</summary>

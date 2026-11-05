@@ -18,6 +18,9 @@ from taylortrader.stats import Fill, round_trips
 
 # period -> (days back, bar size)
 PERIODS = {"1W": (7, "15Min"), "1M": (31, "1Hour"), "3M": (92, "1Day"), "1A": (366, "1Day")}
+# Extra calendar days fetched before the window so the 200-bar average exists from its first point.
+WARMUP_DAYS = {"15Min": 18, "1Hour": 62, "1Day": 330}  # ~200 bars plus holidays
+LINES = ("ma_20", "ma_200", "rsi", "macd", "macd_signal", "macd_diff")
 AFTER_SELL = timedelta(days=7)  # "what happened next" window: about five trading days
 MAX_POINTS = 600
 
@@ -54,7 +57,18 @@ def build(symbol: str, period: str, df: pd.DataFrame, fills: list[Fill], strateg
     keep = list(range(0, len(df), step))
     if keep and keep[-1] != len(df) - 1:
         keep.append(len(df) - 1)
-    points = [{"t": int(df.index[i].timestamp()), "c": round(float(df["close"].iloc[i]), 4)} for i in keep]
+    lines = [k for k in LINES if k in df.columns]
+
+    def pt(i: int) -> dict:
+        row = df.iloc[i]
+        out = {"t": int(df.index[i].timestamp()), "c": round(float(row["close"]), 4)}
+        for k in lines:
+            v = row[k]
+            if pd.notna(v):
+                out[k] = round(float(v), 4)
+        return out
+
+    points = [pt(i) for i in keep]
     to_point = {i: n for n, i in enumerate(keep)}
 
     def point(when) -> int | None:

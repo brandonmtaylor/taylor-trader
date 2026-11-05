@@ -11,6 +11,26 @@ const PERIODS: { id: ChartPeriod; label: string }[] = [
 ];
 const M = { top: 14, right: 70, bottom: 26, left: 52 };
 const H = 280;
+const STRIP = 84;   // height of the RSI / MACD strips under the price
+const GAP = 24;
+
+type LineKey = "ma_20" | "ma_200" | "rsi" | "macd";
+const LINE_OPTS: { id: LineKey; label: string; hint: string }[] = [
+  { id: "ma_20", label: "20-bar avg", hint: "Average of the last 20 bars: the short trend" },
+  { id: "ma_200", label: "200-bar avg", hint: "Average of the last 200 bars: the long trend" },
+  { id: "rsi", label: "RSI", hint: "Momentum from 0 to 100. Under 30 is oversold, over 70 overbought" },
+  { id: "macd", label: "MACD", hint: "Momentum: the line crossing above its signal means it's turning up" },
+];
+const LINES_KEY = "tt.chart.lines";
+
+function loadLines(): Set<LineKey> {
+  try {
+    const v = JSON.parse(localStorage.getItem(LINES_KEY) ?? "[]");
+    return new Set(Array.isArray(v) ? v.filter((k) => LINE_OPTS.some((o) => o.id === k)) : []);
+  } catch {
+    return new Set();
+  }
+}
 const NY = "America/New_York";
 
 function when(t: number, daily: boolean): string {
@@ -39,6 +59,18 @@ export function TradeChart({
   const wrap = useRef<HTMLDivElement>(null);
   const [w, setW] = useState(640);
   const [hover, setHover] = useState<number | null>(null);
+  const [lines, setLines] = useState<Set<LineKey>>(loadLines);
+  const toggle = (k: LineKey) => {
+    const next = new Set(lines);
+    if (next.has(k)) next.delete(k);
+    else next.add(k);
+    setLines(next);
+    try {
+      localStorage.setItem(LINES_KEY, JSON.stringify([...next]));
+    } catch {
+      /* private window: the choice just isn't remembered */
+    }
+  };
 
   useEffect(() => {
     if (!wrap.current) return;
@@ -57,19 +89,45 @@ export function TradeChart({
 
   const scale = useMemo(() => {
     const vals = [...pts.map((p) => p.c), ...marks.map((m) => m.price)];
+    for (const k of ["ma_20", "ma_200"] as const) {
+      if (lines.has(k)) pts.forEach((p) => p[k] != null && vals.push(p[k]!));
+    }
     if (pos?.stop) vals.push(pos.stop);
     if (pos?.entry) vals.push(pos.entry);
     const lo = Math.min(...vals);
     const hi = Math.max(...vals);
     const pad = (hi - lo) * 0.08 || hi * 0.01 || 1;
-    return { y0: lo - pad, y1: hi + pad };
-  }, [pts, marks, pos]);
+    const macdMax = Math.max(1e-9, ...pts.flatMap((p) => [p.macd, p.macd_signal, p.macd_diff].map((v) => Math.abs(v ?? 0))));
+    return { y0: lo - pad, y1: hi + pad, macdMax };
+  }, [pts, marks, pos, lines]);
 
   const innerW = w - M.left - M.right;
   const innerH = H - M.top - M.bottom;
   const x = (i: number) => M.left + (pts.length > 1 ? (innerW * i) / (pts.length - 1) : innerW / 2);
   const y = (v: number) => M.top + innerH * (1 - (v - scale.y0) / (scale.y1 - scale.y0));
   const line = pts.map((p, i) => `${i ? "L" : "M"}${x(i).toFixed(1)},${y(p.c).toFixed(1)}`).join(" ");
+  // Lifts the pen where a value is missing (the 200-bar average needs 200 bars before it starts).
+  const pathOf = (get: (p: (typeof pts)[number]) => number | undefined, yf: (v: number) => number) => {
+    let d = "";
+    let pen = false;
+    pts.forEach((p, i) => {
+      const v = get(p);
+      if (v == null) {
+        pen = false;
+        return;
+      }
+      d += `${pen ? "L" : "M"}${x(i).toFixed(1)},${yf(v).toFixed(1)} `;
+      pen = true;
+    });
+    return d.trim();
+  };
+  const strips = (["rsi", "macd"] as const).filter((k) => lines.has(k));
+  const stripTop = (k: "rsi" | "macd") => M.top + innerH + GAP + strips.indexOf(k) * (STRIP + GAP);
+  const totalH = H + strips.length * (STRIP + GAP);
+  const bottom = strips.length ? stripTop(strips[strips.length - 1]) + STRIP : M.top + innerH;
+  const yRsi = (v: number) => stripTop("rsi") + STRIP * (1 - v / 100);
+  const yMacd = (v: number) => stripTop("macd") + STRIP / 2 - (STRIP / 2 - 4) * (v / scale.macdMax);
+  const barW = Math.max(1, (innerW / Math.max(1, pts.length)) * 0.6);
 
   const pick = (clientX: number, el: SVGSVGElement) => {
     const box = el.getBoundingClientRect();
@@ -118,6 +176,16 @@ export function TradeChart({
           {pos?.stop && <li><span className="swatch swatch--stop" />Stop-loss</li>}
         </ul>
       )}
+      {pts.length > 0 && (
+        <div className="chips" role="group" aria-label="Indicator lines">
+          <span className="chips__label">Show</span>
+          {LINE_OPTS.map((o) => (
+            <button key={o.id} className="chip" aria-pressed={lines.has(o.id)} title={o.hint} onClick={() => toggle(o.id)}>
+              {o.label}
+            </button>
+          ))}
+        </div>
+      )}
 
       <div className="chart" ref={wrap}>
         {error && <p className="empty">Can't load the chart: {error}</p>}
@@ -131,8 +199,8 @@ export function TradeChart({
           <>
             <svg
               width={w}
-              height={H}
-              viewBox={`0 0 ${w} ${H}`}
+              height={totalH}
+              viewBox={`0 0 ${w} ${totalH}`}
               tabIndex={0}
               role="img"
               aria-label={`${shown} price over ${PERIODS.find((p) => p.id === period)?.label}, with ${marks.length} buy and sell marker${marks.length === 1 ? "" : "s"}. Use left and right arrows to read values.`}
@@ -152,7 +220,7 @@ export function TradeChart({
                 </g>
               ))}
               {[0, Math.floor((pts.length - 1) / 2), pts.length - 1].map((i, k) => (
-                <text key={k} className="axis" x={x(i)} y={H - 6}
+                <text key={k} className="axis" x={x(i)} y={totalH - 6}
                   textAnchor={k === 0 ? "start" : k === 2 ? "end" : "middle"}>
                   {period === "1A"
                     ? new Date(pts[i].t * 1000).toLocaleDateString("en-US", { month: "short", year: "numeric", timeZone: "UTC" })
@@ -173,7 +241,49 @@ export function TradeChart({
                 </g>
               )}
 
+              {lines.has("ma_200") && <path className="ind ind--ma200" d={pathOf((p) => p.ma_200, y)} />}
+              {lines.has("ma_20") && <path className="ind ind--ma20" d={pathOf((p) => p.ma_20, y)} />}
               <path className="line line--1" d={line} />
+              {(["ma_20", "ma_200"] as const).filter((k) => lines.has(k)).map((k) => {
+                const lastV = [...pts].reverse().find((p) => p[k] != null)?.[k];
+                return lastV == null ? null : (
+                  <text key={k} className="indlabel" x={M.left + innerW - 4} y={y(lastV)} dy={k === "ma_20" ? "-0.5em" : "1.1em"} textAnchor="end">
+                    {k === "ma_20" ? "20-bar avg" : "200-bar avg"}
+                  </text>
+                );
+              })}
+
+              {lines.has("rsi") && (
+                <g aria-hidden="true">
+                  <rect className="strip" x={M.left} y={stripTop("rsi")} width={innerW} height={STRIP} />
+                  <rect className="strip__band" x={M.left} y={yRsi(70)} width={innerW} height={yRsi(30) - yRsi(70)} />
+                  {[30, 70].map((v) => (
+                    <g key={v}>
+                      <line className="grid grid--base" x1={M.left} x2={w - M.right} y1={yRsi(v)} y2={yRsi(v)} />
+                      <text className="axis" x={M.left - 8} y={yRsi(v)} dy="0.32em" textAnchor="end">{v}</text>
+                    </g>
+                  ))}
+                  <text className="striplabel" x={M.left} y={stripTop("rsi") - 7}>RSI</text>
+                  <path className="ind ind--rsi" d={pathOf((p) => p.rsi, yRsi)} />
+                </g>
+              )}
+              {lines.has("macd") && (
+                <g aria-hidden="true">
+                  <rect className="strip" x={M.left} y={stripTop("macd")} width={innerW} height={STRIP} />
+                  <line className="grid grid--base" x1={M.left} x2={w - M.right} y1={yMacd(0)} y2={yMacd(0)} />
+                  <text className="axis" x={M.left - 8} y={yMacd(0)} dy="0.32em" textAnchor="end">0</text>
+                  {pts.map((p, i) => p.macd_diff == null ? null : (
+                    <rect key={i} className={p.macd_diff >= 0 ? "hist hist--up" : "hist hist--down"}
+                      x={x(i) - barW / 2} width={barW}
+                      y={Math.min(yMacd(0), yMacd(p.macd_diff))} height={Math.abs(yMacd(p.macd_diff) - yMacd(0))} />
+                  ))}
+                  <path className="ind ind--signal" d={pathOf((p) => p.macd_signal, yMacd)} />
+                  <path className="ind ind--macd" d={pathOf((p) => p.macd, yMacd)} />
+                  <text className="striplabel" x={M.left} y={stripTop("macd") - 7}>
+                    MACD <tspan className="striplabel__key">— line</tspan> <tspan className="striplabel__key striplabel__key--sig">- - signal</tspan>
+                  </text>
+                </g>
+              )}
               {ai.map((a, k) => (
                 <circle key={`a${k}`} className={`mk mk--ai${a.acted ? " mk--acted" : ""}`} cx={x(a.i)} cy={y(pts[a.i].c)} r="3.5" />
               ))}
@@ -186,7 +296,7 @@ export function TradeChart({
 
               {hp && (
                 <g className="crosshair">
-                  <line x1={x(hover!)} x2={x(hover!)} y1={M.top} y2={M.top + innerH} />
+                  <line x1={x(hover!)} x2={x(hover!)} y1={M.top} y2={bottom} />
                   <circle className="dot dot--1" cx={x(hover!)} cy={y(hp.c)} r="4.5" />
                 </g>
               )}
@@ -195,6 +305,16 @@ export function TradeChart({
               <div className="tooltip tooltip--wide" style={{ left: Math.max(0, Math.min(x(hover!) + 12, w - 250)), top: M.top }} aria-live="polite">
                 <div className="tooltip__date">{when(hp.t, daily)}{daily ? "" : " ET"}</div>
                 <div className="tooltip__row"><span className="swatch swatch--1" /><b>{money(hp.c)}</b><span className="tooltip__label">{shown}</span></div>
+                {lines.size > 0 && (
+                  <div className="tooltip__inds">
+                    {lines.has("ma_20") && hp.ma_20 != null && <span>20-bar avg {money(hp.ma_20)}</span>}
+                    {lines.has("ma_200") && hp.ma_200 != null && <span>200-bar avg {money(hp.ma_200)}</span>}
+                    {lines.has("rsi") && hp.rsi != null && <span>RSI {hp.rsi.toFixed(0)}</span>}
+                    {lines.has("macd") && hp.macd_diff != null && (
+                      <span>MACD {hp.macd_diff >= 0 ? "above" : "below"} signal</span>
+                    )}
+                  </div>
+                )}
                 {hMarks.map((m, k) => (
                   <div key={k} className="tooltip__row">
                     <span className={`tooltip__mk tooltip__mk--${m.side}`} aria-hidden="true">{m.side === "buy" ? "▲" : "▼"}</span>

@@ -303,6 +303,9 @@ export interface AIGrades {
   rule_only: { n: number; avg_ret: number | null };
   ai_buys: { n: number; avg_ret: number | null };
   confidence: (GradeTally & { label: string })[];
+  by_indicator: { group: string; slices: (GradeTally & { label: string; enough: boolean })[] }[];
+  min_slice: number;
+  recalculated: number;
   recent: GradedDecision[];
 }
 
@@ -332,7 +335,10 @@ export interface TradeChartData {
   symbol: string | null;
   period?: ChartPeriod;
   timeframe?: string;
-  points?: { t: number; c: number }[];
+  points?: {
+    t: number; c: number;
+    ma_20?: number; ma_200?: number; rsi?: number; macd?: number; macd_signal?: number; macd_diff?: number;
+  }[];
   marks?: { i: number; t: string; side: "buy" | "sell"; qty: number; price: number; strategy: string | null }[];
   trades?: ChartTrade[];
   position?: {

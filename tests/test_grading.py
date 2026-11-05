@@ -72,3 +72,63 @@ def test_chart_marks_trades_and_measures_timing():
     assert t["after_high"] == 131 and not t["after_complete"]
     assert out["position"]["entry"] == 101 and out["position"]["stop"] == 90
     assert [a["i"] for a in out["ai"]] == [2]  # only this stock's calls
+
+
+def test_breakdown_hides_thin_slices():
+    rows = []
+    for i in range(12):
+        rows.append({"id": i, "ts": T0.isoformat(), "question": "entry", "action": "hold", "confidence": 0.7,
+                     "ret": -2.0, "verdict": "right", "features_saved": True,
+                     "features": {"close": 100, "ma_200": 110, "ma_20": 101, "rsi": 25 if i < 11 else 60,
+                                  "macd_diff": -0.1, "chaikin": -0.05}})
+    r = grading.report(rows)
+    rsi = next(g for g in r["by_indicator"] if g["group"] == "RSI")["slices"]
+    assert rsi[0]["n"] == 11 and rsi[0]["enough"] and rsi[0]["accuracy"] == 100
+    assert rsi[2]["n"] == 1 and not rsi[2]["enough"]
+    trend = next(g for g in r["by_indicator"] if g["group"] == "Long trend")["slices"]
+    assert trend[1]["n"] == 12 and trend[0]["n"] == 0  # all below the 200-bar average
+
+
+def test_older_calls_get_recalculated_values():
+    df = hourly([100 + (i % 5) for i in range(260)], start=T0 - timedelta(days=60))
+    d = decision(df.index[250].to_pydatetime() + timedelta(minutes=30))
+    g = grading.grade([d], {"NVDA": df})[0]
+    assert not g["features_saved"] and 0 <= g["features"]["rsi"] <= 100 and "ma_200" in g["features"]
+
+
+def test_ai_call_saves_the_indicators_it_was_shown(tmp_path):
+    from taylortrader.journal import Journal
+    from taylortrader.strategies.ai import features
+
+    j = Journal(tmp_path / "j.db")
+    f = features({"close": 101.234567, "rsi": 28.1, "ma_200": float("nan"), "volume": 5})
+    assert f == {"close": 101.2346, "rsi": 28.1}  # missing/NaN values left out, nothing extra
+    j.record_ai(strategy="ai", symbol="NVDA", question="entry", action="hold", confidence=0.6, features=f)
+    assert j.recent_ai(1)[0]["features"] == f
+
+
+def test_old_journal_gains_the_features_column(tmp_path):
+    import sqlite3
+
+    from taylortrader.journal import Journal
+
+    path = tmp_path / "old.db"
+    db = sqlite3.connect(path)
+    db.execute("CREATE TABLE ai_decisions (id INTEGER PRIMARY KEY, ts TEXT NOT NULL, strategy TEXT NOT NULL,"
+               " symbol TEXT NOT NULL, question TEXT NOT NULL, action TEXT, confidence REAL, summary TEXT,"
+               " pros TEXT, cons TEXT, acted INTEGER NOT NULL DEFAULT 0, model TEXT, input_tokens INTEGER,"
+               " output_tokens INTEGER, latency_ms INTEGER, error TEXT)")
+    db.commit()
+    db.close()
+    j = Journal(path)
+    j.record_ai(strategy="ai", symbol="X", question="entry", action="hold", features={"rsi": 40.0})
+    assert j.recent_ai(1)[0]["features"] == {"rsi": 40.0}
+
+
+def test_chart_points_carry_indicator_values():
+    from taylortrader.indicators import add_all
+
+    df = add_all(hourly([100 + (i % 7) for i in range(300)], start=T0 - timedelta(days=40)))
+    out = chart.build("VRT", "1W", df, [], {}, [], None, 0, now=df.index[-1].to_pydatetime())
+    last = out["points"][-1]
+    assert {"ma_20", "ma_200", "rsi", "macd_diff"} <= last.keys()

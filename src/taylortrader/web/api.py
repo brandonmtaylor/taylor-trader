@@ -364,7 +364,7 @@ def create_app(rt: Runtime, cache_ttl: float = 10.0, project: Path = PROJECT) ->
     def all_ai(days: int = 120) -> list[dict]:
         since = (datetime.now(UTC) - timedelta(days=days)).isoformat()
         return [dict(r) for r in rt.journal.db.execute(
-            "SELECT id, ts, strategy, symbol, question, action, confidence, acted, summary, error"
+            "SELECT id, ts, strategy, symbol, question, action, confidence, acted, summary, error, features"
             " FROM ai_decisions WHERE ts >= ? ORDER BY ts", (since,))]
 
     @app.get("/api/results")
@@ -418,7 +418,11 @@ def create_app(rt: Runtime, cache_ttl: float = 10.0, project: Path = PROJECT) ->
         now = datetime.now(UTC)
 
         def load():
-            return _broker_call(lambda: md.bars(symbol, timeframe, now - timedelta(days=days)))
+            from taylortrader.indicators import add_all
+
+            back = days + chart.WARMUP_DAYS[timeframe]
+            df = _broker_call(lambda: md.bars(symbol, timeframe, now - timedelta(days=back)))
+            return add_all(df) if not df.empty else df
 
         df = slow_cache.get(f"bars:{symbol}:{period}", load)
         stops = cache.get("stops", lambda: _broker_call(getattr(broker, "stop_prices", dict)))
