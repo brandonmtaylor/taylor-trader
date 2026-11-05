@@ -148,6 +148,8 @@ def cmd_replay(args) -> int:
         print("error: no AI strategy in the config", file=sys.stderr)
         return 2
     params = {**sc.params, "use_news": False}
+    if args.entry_when is not None:
+        params["entry_when"] = args.entry_when
     strat = get_strategy("ai", params)
     symbols = [s.upper() for s in args.symbols] or sc.symbols
     creds = load_alpaca_credentials("paper")  # data only
@@ -160,7 +162,7 @@ def cmd_replay(args) -> int:
     model = f"{cfg.ai.provider}:{cfg.ai.model}:{cfg.ai.effort}"
     answers = replay.Answers(cfg.data_dir / "replay" / "answers.jsonl")
     todo = sum(q.key not in answers.saved for q in qs)
-    rule = sc.params.get("entry_when") or "every bar"
+    rule = params.get("entry_when") or "every bar"
     print(f"{', '.join(symbols)} {sc.timeframe}, last {args.days} days. Rule: {rule}.")
     print(f"{qualified} bars passed the rule ({args.gap}+ bars apart); asking about {len(qs)}, "
           f"{len(qs) - todo} already answered, {todo} to ask with {model}.")
@@ -384,6 +386,7 @@ def main(argv: list[str] | None = None) -> int:
     rp.add_argument("symbols", nargs="*", help="default: the AI strategy's symbols")
     rp.add_argument("--days", type=int, default=90)
     rp.add_argument("--max-calls", type=int, default=150)
+    rp.add_argument("--entry-when", help="try a different buy rule than the config's (config unchanged)")
     rp.add_argument("--gap", type=int, default=7, help="min bars between questions on one stock")
     rp.add_argument("--workers", type=int, default=2)
     rp.add_argument("--seed", type=int, default=7)
