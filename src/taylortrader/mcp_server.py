@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any, Literal
+from urllib.parse import quote
 
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
@@ -127,6 +128,21 @@ def build(config_path: Path = Path("config.toml")) -> MCPServer:
     def get_ai_decisions(limit: int = 20) -> list[dict]:
         """What the AI strategy asked its model and why it answered as it did, with pros and cons."""
         return bot.get(f"/api/ai/decisions?limit={max(1, min(limit, 100))}")
+
+    @mcp.tool(annotations=READ)
+    def get_ai_report_card() -> dict:
+        """The AI strategy's calls graded against what the price did over the next trading day:
+        share right, how its buys did vs. buying every time the free rule passed, accuracy by
+        confidence, and recent calls with outcomes. Few graded calls means the numbers are noise."""
+        return bot.get("/api/ai/grades")
+
+    @mcp.tool(annotations=READ)
+    def get_trade_chart(symbol: str, period: Literal["1W", "1M", "3M", "1A"] = "1M") -> dict:
+        """One stock's bot trades with timing: for each closed trade the best price while held,
+        the share of that gain the sell kept, and how far it rose in the week after selling; for an
+        open position the best price since buying and the stop. Price points are left out."""
+        d = bot.get(f"/api/chart?symbol={quote(symbol.strip().upper())}&period={period}")
+        return {k: v for k, v in d.items() if k not in ("points",)}
 
     @mcp.tool(annotations=READ)
     def get_strategies() -> dict:

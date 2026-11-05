@@ -156,6 +156,7 @@ def create_app(rt: Runtime, cache_ttl: float = 10.0, project: Path = PROJECT) ->
     # Reject requests whose Host isn't this machine (blocks DNS-rebinding from web pages).
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=["127.0.0.1", "localhost"])
     cache = TTLCache(cache_ttl)
+    slow_cache = TTLCache(max(cache_ttl, 300.0))  # price history and grades: minutes old is fine
     dev_origins = {"http://localhost:5173", "http://127.0.0.1:5173"} if os.environ.get("TAYLORTRADER_DEV") else set()
 
     def guard(request: Request) -> None:
@@ -348,20 +349,83 @@ def create_app(rt: Runtime, cache_ttl: float = 10.0, project: Path = PROJECT) ->
     def ai_decisions(limit: int = Query(30, ge=1, le=200)) -> list[dict]:
         return rt.journal.recent_ai(limit)
 
+    def fills_and_owners():
+        broker = need_broker()
+        fills = cache.get("fills", lambda: _broker_call(broker.fills))
+        strategy_of = {r["broker_order_id"]: r["strategy"] for r in rt.journal.db.execute(
+            "SELECT broker_order_id, strategy FROM orders WHERE side='buy' AND broker_order_id IS NOT NULL")}
+        return fills, strategy_of
+
+    def need_data():
+        if rt.market_data is None:
+            raise HTTPException(503, rt.broker_error or "Price data isn't connected.")
+        return rt.market_data
+
+    def all_ai(days: int = 120) -> list[dict]:
+        since = (datetime.now(UTC) - timedelta(days=days)).isoformat()
+        return [dict(r) for r in rt.journal.db.execute(
+            "SELECT id, ts, strategy, symbol, question, action, confidence, acted, summary, error"
+            " FROM ai_decisions WHERE ts >= ? ORDER BY ts", (since,))]
+
     @app.get("/api/results")
     def results() -> dict[str, Any]:
         """Closed trades from Alpaca's fills, credited to the strategy whose buy opened them."""
         from taylortrader.stats import results as compute
 
-        broker = need_broker()
-
         def load():
-            fills = _broker_call(broker.fills)
-            strategy_of = {r["broker_order_id"]: r["strategy"] for r in rt.journal.db.execute(
-                "SELECT broker_order_id, strategy FROM orders WHERE side='buy' AND broker_order_id IS NOT NULL")}
+            fills, strategy_of = fills_and_owners()
             return compute(fills, strategy_of, datetime.now(UTC))
 
         return cache.get("results", load)
+
+    @app.get("/api/ai/grades")
+    def ai_grades() -> dict[str, Any]:
+        """Each AI decision scored against what the price did over the next trading day."""
+        from taylortrader import grading
+
+        def load():
+            decisions = all_ai()
+            md = need_data()
+            now = datetime.now(UTC)
+            bars = {}
+            for symbol, start in grading.bars_needed(decisions, now).items():
+                try:
+                    bars[symbol] = md.bars(symbol, "1Hour", start)
+                except Exception as e:  # noqa: BLE001 - that symbol stays "pending"; the rest still grade
+                    log.warning("grading %s: no bars: %s", symbol, e)
+            return grading.report(grading.grade(decisions, bars))
+
+        return slow_cache.get("ai_grades", load)
+
+    @app.get("/api/chart")
+    def trade_chart(symbol: str = Query("", max_length=15),
+                    period: str = Query("1M", pattern="^(1W|1M|3M|1A)$")) -> dict[str, Any]:
+        """A stock's price with the bot's buys, sells and AI calls on it, and how each trade was timed."""
+        from taylortrader import chart
+
+        broker = need_broker()
+        fills, strategy_of = fills_and_owners()
+        held = cache.get("snapshot", lambda: _broker_call(broker.snapshot)).positions
+        # Stocks worth picking: held now, traded this year, or watched by a strategy.
+        recent = [f.symbol for f in sorted(fills, key=lambda f: f.ts, reverse=True)]
+        watched = [s for sc in rt.settings.enabled_strategies for s in sc.symbols]
+        symbols = [s for s in dict.fromkeys([*held, *recent, *watched]) if "/" not in s]  # stocks, not crypto
+        symbol = symbol.strip().upper() or (symbols[0] if symbols else "")
+        if not symbol:
+            return {"symbols": [], "symbol": None}
+        md = need_data()
+        days, timeframe = chart.PERIODS[period]
+        now = datetime.now(UTC)
+
+        def load():
+            return _broker_call(lambda: md.bars(symbol, timeframe, now - timedelta(days=days)))
+
+        df = slow_cache.get(f"bars:{symbol}:{period}", load)
+        stops = cache.get("stops", lambda: _broker_call(getattr(broker, "stop_prices", dict)))
+        pos = held.get(symbol)
+        out = chart.build(symbol, period, df, fills, strategy_of, all_ai(days + 1), stops.get(symbol),
+                          pos.qty if pos else 0.0, now)
+        return {"symbols": symbols, **out}
 
     @app.get("/api/settings")
     def settings() -> dict[str, Any]:

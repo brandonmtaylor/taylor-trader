@@ -102,6 +102,14 @@ class AlpacaBroker:
             if o.side == OrderSide.SELL and o.order_type in _STOP_TYPES
         }
 
+    def stop_prices(self) -> dict[str, float]:
+        """Each symbol's protective stop price at the broker (the highest, if there are several)."""
+        out: dict[str, float] = {}
+        for o in self.open_orders():
+            if o.side == OrderSide.SELL and o.order_type in _STOP_TYPES and o.stop_price is not None:
+                out[o.symbol] = max(out.get(o.symbol, 0.0), float(o.stop_price))
+        return out
+
     def symbols_selling(self) -> set[str]:
         """Symbols with a sell waiting to fill (a close, not a protective stop or bracket leg),
         e.g. one sent while the market is closed."""

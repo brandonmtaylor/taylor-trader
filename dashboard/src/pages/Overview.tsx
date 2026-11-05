@@ -1,8 +1,10 @@
 import { useState } from "react";
-import type { Account, AIDecision, EventRow, History, OrderRow, Performance, PositionRow, Results, Status } from "../api";
+import type { Account, AIDecision, AIGrades as Grades, ChartPeriod, EventRow, History, OrderRow, Performance, PositionRow, Results, Status, TradeChartData } from "../api";
+import { AIGrades } from "../components/AIGrades";
 import { EquityChart } from "../components/EquityChart";
 import { AIDecisions, Events, Orders, PastResults, Positions, ResultsPanel, Strategies, Vitals } from "../components/Panels";
 import { SellDialog } from "../components/Sell";
+import { TradeChart } from "../components/TradeChart";
 import { usePoll } from "../usePoll";
 
 export function Overview({ status, onStatus }: { status: Status | null; onStatus: () => void }) {
@@ -14,6 +16,10 @@ export function Overview({ status, onStatus }: { status: Status | null; onStatus
   const events = usePoll<EventRow[]>("/api/events?limit=40", 15_000);
   const history = usePoll<History>("/api/history", 3_600_000);
   const ai = usePoll<AIDecision[]>("/api/ai/decisions?limit=30", 30_000);
+  const grades = usePoll<Grades>("/api/ai/grades", 600_000);
+  const [chartSymbol, setChartSymbol] = useState("");
+  const [chartPeriod, setChartPeriod] = useState<ChartPeriod>("1M");
+  const chart = usePoll<TradeChartData>(`/api/chart?symbol=${encodeURIComponent(chartSymbol)}&period=${chartPeriod}`, 60_000);
   // undefined: closed. null: sell everything. a row: sell that one.
   const [selling, setSelling] = useState<PositionRow | null | undefined>(undefined);
   const [sold, setSold] = useState<string | null>(null);
@@ -24,6 +30,7 @@ export function Overview({ status, onStatus }: { status: Status | null; onStatus
     orders.reload();
     events.reload();
     results.reload();
+    chart.reload();
     onStatus();
   };
 
@@ -33,11 +40,14 @@ export function Overview({ status, onStatus }: { status: Status | null; onStatus
       <div className="col col--main">
         <EquityChart perf={perf.data} period={period} onPeriod={setPeriod} error={perf.error} />
         <ResultsPanel results={results.data} perf={perf.data} error={results.error} />
+        <TradeChart data={chart.data} error={chart.error} symbol={chartSymbol} period={chartPeriod}
+          onSymbol={setChartSymbol} onPeriod={setChartPeriod} />
         <Positions account={account.data} error={account.error} onSell={(row) => { setSold(null); setSelling(row); }} notice={sold}
           marketOpen={status?.market?.is_open ?? null} />
         <Orders orders={orders.data} error={orders.error} />
       </div>
       <aside className="col col--side">
+        <AIGrades grades={grades.data} error={grades.error} />
         <AIDecisions rows={ai.data} error={ai.error} />
         <Events events={events.data} />
         <Strategies status={status} />

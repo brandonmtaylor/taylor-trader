@@ -654,3 +654,42 @@ select.input { width: 100%; }
 /* the logo's dark tile would vanish into a dark header: give it a hairline edge there */
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .brand__mark { box-shadow: 0 0 0 1px rgb(255 255 255 / 0.14); } }
 :root[data-theme="dark"] .brand__mark { box-shadow: 0 0 0 1px rgb(255 255 255 / 0.14); }
+
+/* ---------- trades on the chart ---------- */
+
+.tc__controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: flex-end; }
+.tc__symbol select { width: auto; min-width: 92px; padding: 5px 10px; font: 600 13px var(--f-num); border-radius: 999px; }
+.legend--wrap { flex-wrap: wrap; gap: 6px 18px; }
+.legend svg { display: block; }
+.swatch--stop { height: 0; border-top: 2px dashed var(--crit); background: none; }
+.mk { stroke: var(--sheet); stroke-width: 1.5; }
+.mk--buy { fill: var(--up); }
+.mk--sell { fill: var(--series-2); }
+.mk--ai { fill: var(--sheet); stroke: var(--ink-3); stroke-width: 1.5; }
+.mk--ai.mk--acted { fill: var(--ink-2); }
+.level { stroke: var(--ink-3); stroke-width: 1; stroke-dasharray: 4 4; }
+.level--stop { stroke: var(--crit); }
+.levellabel { fill: var(--ink-3); font-size: 11px; paint-order: stroke; stroke: var(--sheet); stroke-width: 3px; stroke-linejoin: round; }
+.levellabel--stop { fill: var(--crit); }
+.tooltip--wide { max-width: 250px; white-space: normal; }
+.tooltip__mk { font-size: 10px; width: 14px; text-align: center; }
+.tooltip__mk--buy { color: var(--up); }
+.tooltip__mk--sell { color: var(--series-2); }
+.tooltip__ai { margin-top: 6px; color: var(--ink-2); line-height: 1.35; }
+.tc__open { margin: 12px 0 0; font-size: 14px; color: var(--ink-2); }
+.tc__open b { color: var(--ink); font-weight: 600; }
+.tc__sub { display: block; color: var(--ink-3); font-size: 12px; }
+.muted { color: var(--ink-3); }
+
+/* ---------- AI report card ---------- */
+
+.stats--2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.stats--2 + .table { margin-top: 10px; }
+.table--tight td, .table--tight th { padding-top: 7px; padding-bottom: 7px; }
+.grades { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 6px; font-size: 13px; }
+.grades__row { display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: baseline; }
+.grades__mark { width: 14px; text-align: center; font-weight: 700; color: var(--ink-3); }
+.grades__row--right .grades__mark { color: var(--good); }
+.grades__row--wrong .grades__mark { color: var(--crit); }
+.grades__out { flex-basis: 100%; padding-left: 22px; color: var(--ink-2); }
+@media (max-width: 520px) { .stats--2 { grid-template-columns: 1fr; } }

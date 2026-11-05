@@ -266,3 +266,78 @@ export async function send<T>(method: "POST" | "PUT" | "DELETE", path: string, b
   }
   return res.json() as Promise<T>;
 }
+
+export interface GradeTally {
+  n: number;
+  right: number;
+  wrong: number;
+  flat: number;
+  accuracy: number | null;
+  avg_ret: number | null;
+}
+
+export interface GradedDecision {
+  id: number;
+  ts: string;
+  strategy: string;
+  symbol: string;
+  question: "entry" | "exit";
+  action: "buy" | "sell" | "hold";
+  confidence: number | null;
+  acted: number;
+  summary: string | null;
+  price: number | null;
+  ret: number | null;
+  up: number | null;
+  down: number | null;
+  verdict: "right" | "wrong" | "flat" | "pending";
+}
+
+export interface AIGrades {
+  horizon: string;
+  threshold: number;
+  graded: number;
+  pending: number;
+  overall: GradeTally;
+  by_call: Record<string, GradeTally>;
+  rule_only: { n: number; avg_ret: number | null };
+  ai_buys: { n: number; avg_ret: number | null };
+  confidence: (GradeTally & { label: string })[];
+  recent: GradedDecision[];
+}
+
+export type ChartPeriod = "1W" | "1M" | "3M" | "1A";
+
+export interface ChartTrade {
+  symbol: string;
+  strategy: string | null;
+  qty: number;
+  entry: number;
+  exit: number;
+  opened: string;
+  closed: string;
+  pnl: number;
+  pct: number;
+  win: boolean;
+  peak: number | null;
+  peak_pct: number | null;
+  captured: number | null;
+  after_high: number | null;
+  after_pct: number | null;
+  after_complete: boolean;
+}
+
+export interface TradeChartData {
+  symbols: string[];
+  symbol: string | null;
+  period?: ChartPeriod;
+  timeframe?: string;
+  points?: { t: number; c: number }[];
+  marks?: { i: number; t: string; side: "buy" | "sell"; qty: number; price: number; strategy: string | null }[];
+  trades?: ChartTrade[];
+  position?: {
+    qty: number; entry: number | null; opened: string | null; last: number | null; stop: number | null;
+    peak: number | null; peak_pct: number | null; pct: number | null;
+  } | null;
+  ai?: { i: number; t: string; action: string; question: string; confidence: number | null; acted: boolean; summary: string | null }[];
+}

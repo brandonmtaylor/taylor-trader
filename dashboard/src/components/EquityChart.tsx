@@ -11,7 +11,7 @@ const PERIODS: { id: Period; label: string }[] = [
 const M = { top: 12, right: 64, bottom: 26, left: 44 };
 const H = 260;
 
-function niceTicks(lo: number, hi: number, count = 4): number[] {
+export function niceTicks(lo: number, hi: number, count = 4): number[] {
   const span = hi - lo || 1;
   const raw = span / count;
   const mag = 10 ** Math.floor(Math.log10(raw));

@@ -98,6 +98,9 @@ Set it up under Settings → AI model, then add an `ai` strategy with plain-Engl
   overview.
 - It can't be backtested honestly (the model has read what happened next), so the backtester
   refuses it. Try it in dry run, then on paper.
+- The **AI report card** on the overview grades every call against what the price did over the
+  next trading day (free: no extra model calls): how often it was right, whether its buys beat
+  buying every time your rule passed, and whether higher confidence really is right more often.
 
 For UI work: `uv run taylortrader dashboard --no-open` plus `TAYLORTRADER_DEV=1` and `npm run dev`
 in `dashboard/` (Vite proxies `/api` to it).
@@ -110,6 +113,9 @@ on NVDA hourly", "pause new buys".
 ```sh
 claude mcp add taylortrader --scope user -- uv --directory /path/to/taylor-trader run taylortrader mcp
 ```
+
+It can also read the AI report card ("how often is the AI right?") and how well each trade was
+timed ("did we sell VRT too early?").
 
 It runs on your Mac and uses the same rules as the dashboard: every change is validated, hard
 limits still apply, and changes are logged as coming from Claude. Selling needs the exact

@@ -311,3 +311,31 @@ def test_results_pair_fills_and_credit_the_strategy(client):
 
 def test_page_is_never_served_stale(client):
     assert client.get("/api/status").headers["cache-control"] == "no-cache"
+
+
+class Hourly:
+    def bars(self, symbol, timeframe, start, end=None):
+        idx = pd.date_range(datetime.now(UTC) - pd.Timedelta(hours=30), periods=30, freq="h", tz="UTC")
+        c = pd.Series(range(100, 130), index=idx, dtype=float)
+        return pd.DataFrame({"open": c, "high": c + 1, "low": c - 1, "close": c, "volume": 1.0})
+
+
+def test_trade_chart_and_ai_grades(client):
+    from datetime import timedelta
+
+    from taylortrader.stats import Fill
+
+    client.rt.market_data = Hourly()
+    now = datetime.now(UTC)
+    client.broker.fills = lambda: [Fill(now - timedelta(hours=20), "VRT", "buy", 10, 110.0, "b1"),
+                                   Fill(now - timedelta(hours=1), "BTC/USD", "buy", 1, 1.0, "c1")]
+    client.broker.stop_prices = lambda: {"VRT": 99.0}
+    d = client.get("/api/chart?period=1W").json()
+    assert d["symbol"] == "VRT" and "BTC/USD" not in d["symbols"] and "AAPL" in d["symbols"]
+    assert d["marks"][0]["side"] == "buy" and d["position"]["stop"] == 99.0
+    assert client.get("/api/chart?period=5Y").status_code == 422
+
+    client.rt.journal.record_ai(strategy="ai", symbol="VRT", question="entry", action="hold", confidence=0.6)
+    client.rt.journal.db.execute("UPDATE ai_decisions SET ts=?", ((now - timedelta(hours=20)).isoformat(),))
+    g = client.get("/api/ai/grades").json()
+    assert g["graded"] == 1 and g["recent"][0]["verdict"] == "wrong"  # it held, then the price rose
