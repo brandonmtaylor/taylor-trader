@@ -136,6 +136,93 @@ def cmd_backtest(args) -> int:
     return 0
 
 
+def cmd_replay(args) -> int:
+    """Ask the AI about past bars (disguised) and grade it like the live report card."""
+    from taylortrader import llm as llm_mod
+    from taylortrader import replay
+    from taylortrader.data import MarketData
+
+    cfg = load_config(args.config)
+    sc = next((s for s in cfg.strategies if s.name == "ai"), None)
+    if sc is None:
+        print("error: no AI strategy in the config", file=sys.stderr)
+        return 2
+    params = {**sc.params, "use_news": False}
+    strat = get_strategy("ai", params)
+    symbols = [s.upper() for s in args.symbols] or sc.symbols
+    creds = load_alpaca_credentials("paper")  # data only
+    md = MarketData(creds, cfg.data_dir / "cache", feed="sip")
+    start = datetime.now(UTC) - timedelta(days=args.days + 45)  # + warmup for the 200-bar average
+    frames = {s: md.bars(s, sc.timeframe, start) for s in symbols}
+    bar = timedelta(hours=1) if sc.timeframe == "1Hour" else timedelta(days=1)
+    qs, qualified = replay.questions(frames, strat, bar=bar, gap=args.gap, max_calls=args.max_calls,
+                                     seed=args.seed)
+    model = f"{cfg.ai.provider}:{cfg.ai.model}:{cfg.ai.effort}"
+    answers = replay.Answers(cfg.data_dir / "replay" / "answers.jsonl")
+    todo = sum(q.key not in answers.saved for q in qs)
+    rule = sc.params.get("entry_when") or "every bar"
+    print(f"{', '.join(symbols)} {sc.timeframe}, last {args.days} days. Rule: {rule}.")
+    print(f"{qualified} bars passed the rule ({args.gap}+ bars apart); asking about {len(qs)}, "
+          f"{len(qs) - todo} already answered, {todo} to ask with {model}.")
+    if qs:
+        print(f"Prompt size: about {len(qs[0].prompt) // 4:,} tokens each, plus instructions.")
+    if args.plan or not qs:
+        return 0
+
+    client = llm_mod.build(cfg.ai.provider, cfg.ai.model, cfg.ai.endpoint, cfg.ai.effort, cfg.ai.timeout_seconds)
+    errors = []
+
+    def progress(n, total, a):
+        if a.get("error"):
+            errors.append(a["error"])
+        mark = "!" if a.get("error") else a["action"][0].upper()
+        print(f"\r  {n}/{total} asked  last: {mark} {a['symbol']} {a['ts'][:16]}  errors: {len(errors)}   ",
+              end="", flush=True)
+
+    try:
+        replay.ask_all(qs, client, answers, model, workers=args.workers, on_answer=progress)
+    except KeyboardInterrupt:
+        print("\nStopped. Answers so far are saved; run again to continue.")
+    print()
+    if errors:
+        print(f"{len(errors)} calls failed (not saved; a rerun retries them). Last: {errors[-1]}")
+
+    rep = replay.grade(qs, answers, frames, float(strat.p.min_confidence))
+    out = cfg.data_dir / "replay" / f"report-{datetime.now(UTC):%Y%m%d-%H%M}.json"
+    out.write_text(json.dumps(rep, default=str, indent=1))
+    _print_replay(rep)
+    print(f"\nFull report: {out}")
+    return 0
+
+
+def _print_replay(rep: dict) -> None:
+    def p(v, nd=2):
+        return "—" if v is None else f"{v:+.{nd}f}%"
+
+    def acc(t):
+        return "—" if t.get("accuracy") is None else f"{t['accuracy']:.0f}%"
+
+    o = rep["overall"]
+    print(f"\nGraded {rep['graded']} of {rep['answered']} answers over the next trading day "
+          f"(moves under {rep['threshold']}% are flat).")
+    print(f"  Right: {acc(o)}  ({o['right']} right, {o['wrong']} wrong, {o['flat']} flat)")
+    for k, label in (("entry:buy", "Said buy"), ("entry:hold", "Said hold")):
+        t = rep["by_call"].get(k)
+        if t:
+            print(f"  {label:<10} {t['n']:>4}x  right {acc(t):>4}  next day {p(t['avg_ret'])}")
+    print(f"  Every bar the rule passed:  {rep['rule_only']['n']:>4}x  next day {p(rep['rule_only']['avg_ret'])}")
+    w = rep["would_trade"]
+    print(f"  Buys the bot would place (confidence >= {w['min_confidence']:.0%}): {w['n']}x  "
+          f"next day {p(w['avg_ret'])}")
+    conf = [b for b in rep["confidence"] if b["n"]]
+    if conf:
+        print("  By confidence: " + " · ".join(f"{b['label']} {acc(b)} ({b['n']})" for b in conf))
+    print("  By stock: " + " · ".join(f"{s} {acc(t)} ({t['n']}, {t['buys']} buys)"
+                                       for s, t in rep["by_symbol"].items()))
+    if rep["graded"] < 100:
+        print(f"  Only {rep['graded']} graded: differences of a few points are noise.")
+
+
 def cmd_run(args) -> int:
     import os
 
@@ -293,6 +380,15 @@ def main(argv: list[str] | None = None) -> int:
     bt.add_argument("--param", action="append", help="strategy param override, e.g. rsi_buy=30")
     bt.add_argument("--trades", action="store_true", help="list every trade")
     bt.set_defaults(fn=cmd_backtest)
+    rp = sub.add_parser("replay", help="ask the AI about past bars (disguised) and grade it")
+    rp.add_argument("symbols", nargs="*", help="default: the AI strategy's symbols")
+    rp.add_argument("--days", type=int, default=90)
+    rp.add_argument("--max-calls", type=int, default=150)
+    rp.add_argument("--gap", type=int, default=7, help="min bars between questions on one stock")
+    rp.add_argument("--workers", type=int, default=2)
+    rp.add_argument("--seed", type=int, default=7)
+    rp.add_argument("--plan", action="store_true", help="show what would be asked; ask nothing")
+    rp.set_defaults(fn=cmd_replay)
     run = sub.add_parser("run")
     run.add_argument("--dry-run", action="store_true", help="decide and alert, but place no orders")
     run.add_argument("--once", action="store_true", help="one tick, then exit")

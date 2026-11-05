@@ -101,6 +101,11 @@ Set it up under Settings → AI model, then add an `ai` strategy with plain-Engl
 - The **AI report card** on the overview grades every call against what the price did over the
   next trading day (free: no extra model calls): how often it was right, whether its buys beat
   buying every time your rule passed, and whether higher confidence really is right more often.
+- To get a read in a day instead of weeks, `uv run taylortrader replay` asks the model about past
+  bars and grades the answers the same way. Each stock is disguised first (no ticker, prices
+  scaled, dates moved years ahead, no news) so the model can't recall what happened next. It uses
+  your AI settings and your plan or API credit: `--plan` shows how many calls it would make
+  first. Answers are saved, so stopping and rerunning picks up where it left off.
 
 For UI work: `uv run taylortrader dashboard --no-open` plus `TAYLORTRADER_DEV=1` and `npm run dev`
 in `dashboard/` (Vite proxies `/api` to it).
