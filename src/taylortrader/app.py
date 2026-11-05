@@ -63,7 +63,9 @@ def build_news(creds):
     from alpaca.data.historical.news import NewsClient
     from alpaca.data.requests import NewsRequest
 
-    client = NewsClient(creds.key_id.get_secret_value(), creds.secret_key.get_secret_value())
+    from taylortrader.broker import with_timeout
+
+    client = with_timeout(NewsClient(creds.key_id.get_secret_value(), creds.secret_key.get_secret_value()))
     cache: dict[str, tuple[float, list[dict]]] = {}
 
     def fetch(symbol: str) -> list[dict]:

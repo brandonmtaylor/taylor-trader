@@ -22,6 +22,7 @@ from alpaca.data.historical import StockHistoricalDataClient
 from alpaca.data.requests import StockBarsRequest
 from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
 
+from taylortrader.broker import with_timeout
 from taylortrader.secrets import AlpacaCredentials
 
 log = logging.getLogger(__name__)
@@ -48,9 +49,9 @@ class MarketData:
     """Alpaca bars (feed "iex" or "sip")."""
 
     def __init__(self, creds: AlpacaCredentials, cache_dir: Path, feed: str = "iex"):
-        self._client = StockHistoricalDataClient(
+        self._client = with_timeout(StockHistoricalDataClient(
             creds.key_id.get_secret_value(), creds.secret_key.get_secret_value()
-        )
+        ))
         self.cache_dir = Path(cache_dir)
         self.feed = feed
 

@@ -266,10 +266,14 @@ class Service:
         held = {s: p.qty for s, p in snap.positions.items()}
 
         # A position we knew about vanished and we didn't sell it: the broker-side stop fired.
+        # "We sold it" includes a sell placed hours ago that only just filled (e.g. sold from the
+        # dashboard after hours, filled at the open), so look at fill times as well as order times.
+        cutoff = self.now() - timedelta(hours=2)
         for symbol in set(self.known_positions) - set(held):
             if not self.journal.db.execute(
-                "SELECT 1 FROM orders WHERE symbol=? AND side='sell' AND ts >= ?",
-                (symbol, (self.now() - timedelta(hours=2)).isoformat()),
+                "SELECT 1 FROM orders WHERE symbol=? AND side='sell' AND (ts >= ? OR status='submitted'"
+                " OR (fill_ts IS NOT NULL AND datetime(fill_ts) >= datetime(?)))",
+                (symbol, cutoff.isoformat(), cutoff.isoformat()),
             ).fetchone():
                 self.journal.event("stop_hit", f"{symbol} position closed at the broker (stop or take-profit)")
                 self.alerts.send(f"Position closed: {symbol}", "Closed at Alpaca by its stop-loss or take-profit "

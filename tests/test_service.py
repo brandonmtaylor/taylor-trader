@@ -217,6 +217,31 @@ def test_broker_side_stop_hit_is_reported(svc):
     assert any("Position closed: VRT" in t for t in svc.rec.titles())
 
 
+def test_after_hours_sale_filling_at_the_open_is_not_a_stop_hit(svc):
+    # Sold from the dashboard at night; the market order only fills at the open, hours later.
+    svc.broker.positions["AAPL"] = Position("AAPL", 1, 328, 300)
+    svc.tick()
+    svc.journal.db.execute(
+        "INSERT INTO orders (ts, mode, strategy, symbol, side, qty, reason, status, fill_price, fill_ts)"
+        " VALUES (?, 'paper', 'dashboard', 'AAPL', 'sell', 1, 'sold from the dashboard', 'filled', 345.37, ?)",
+        ((NOW - timedelta(hours=10)).isoformat(), str(NOW - timedelta(minutes=1)).replace("T", " ")))
+    del svc.broker.positions["AAPL"]
+    svc.tick()
+    assert not any("Position closed: AAPL" in t for t in svc.rec.titles())
+
+
+def test_alpaca_clients_get_a_request_timeout():
+    from taylortrader.broker import HTTP_TIMEOUT, with_timeout
+
+    seen = {}
+    session = SimpleNamespace(request=lambda method, url, **kw: seen.update(kw))
+    with_timeout(SimpleNamespace(_session=session))
+    session.request("GET", "https://example.test")
+    assert seen["timeout"] == HTTP_TIMEOUT
+    session.request("GET", "https://example.test", timeout=3)
+    assert seen["timeout"] == 3
+
+
 def test_fills_are_recorded(svc):
     FLAGS["entry"] = True
     svc.tick()

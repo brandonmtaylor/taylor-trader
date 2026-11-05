@@ -34,6 +34,27 @@ class BrokerError(RuntimeError):
     pass
 
 
+# alpaca-py sends requests with no timeout, so one stalled connection can freeze the service.
+# (connect, read) seconds; a timed-out call raises and the next check tries again.
+HTTP_TIMEOUT = (5.0, 30.0)
+
+
+def with_timeout(client, timeout=HTTP_TIMEOUT):
+    """Give an alpaca-py client a default request timeout (it has no option for one)."""
+    session = getattr(client, "_session", None)
+    if session is None:  # alpaca-py changed; better no timeout than not starting
+        log.warning("couldn't set a request timeout on %s", type(client).__name__)
+        return client
+    send = session.request
+
+    def request(method, url, **kwargs):
+        kwargs.setdefault("timeout", timeout)
+        return send(method, url, **kwargs)
+
+    session.request = request
+    return client
+
+
 def _price(p: float) -> float:
     # Alpaca accepts 2 decimals at/above $1, 4 below.
     return round(p, 2) if p >= 1 else round(p, 4)
@@ -42,9 +63,9 @@ def _price(p: float) -> float:
 class AlpacaBroker:
     def __init__(self, creds: AlpacaCredentials):
         self.paper = creds.paper
-        self._client = TradingClient(
+        self._client = with_timeout(TradingClient(
             creds.key_id.get_secret_value(), creds.secret_key.get_secret_value(), paper=creds.paper
-        )
+        ))
 
     @property
     def mode(self) -> str:
