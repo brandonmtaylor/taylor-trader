@@ -48,10 +48,18 @@ export interface PositionRow {
   owner: string | null;
   /** a sell is already waiting to fill (e.g. sent while the market was closed) */
   selling: boolean;
+  stop_price: number | null;
+  /** distance from the current price, negative */
+  stop_pct: number | null;
+  /** dollars lost from here if the stop fires (negative) */
+  stop_loss_usd: number | null;
+  target_price: number | null;
+  target_pct: number | null;
   issues: string[];
 }
 
 export interface Account {
+  stops_at_risk_usd: number | null;
   equity: number;
   cash: number;
   day_start_equity: number;
@@ -343,6 +351,7 @@ export interface TradeChartData {
   trades?: ChartTrade[];
   position?: {
     qty: number; entry: number | null; opened: string | null; last: number | null; stop: number | null;
+    target: number | null;
     peak: number | null; peak_pct: number | null; pct: number | null;
   } | null;
   ai?: { i: number; t: string; action: string; question: string; confidence: number | null; acted: boolean; summary: string | null }[];

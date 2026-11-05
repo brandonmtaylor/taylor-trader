@@ -93,6 +93,7 @@ export function TradeChart({
       if (lines.has(k)) pts.forEach((p) => p[k] != null && vals.push(p[k]!));
     }
     if (pos?.stop) vals.push(pos.stop);
+    if (pos?.target) vals.push(pos.target);
     if (pos?.entry) vals.push(pos.entry);
     const lo = Math.min(...vals);
     const hi = Math.max(...vals);
@@ -174,6 +175,7 @@ export function TradeChart({
           <li><svg width="12" height="12" aria-hidden="true"><path className="mk mk--sell" d="M6,11 L11,2 L1,2 Z" /></svg>Sell</li>
           {ai.length > 0 && <li><svg width="12" height="12" aria-hidden="true"><circle className="mk mk--ai" cx="6" cy="6" r="3.5" /></svg>AI call</li>}
           {pos?.stop && <li><span className="swatch swatch--stop" />Stop-loss</li>}
+          {pos?.target && <li><span className="swatch swatch--target" />Take-profit</li>}
         </ul>
       )}
       {pts.length > 0 && (
@@ -232,6 +234,12 @@ export function TradeChart({
                 <g>
                   <line className="level level--stop" x1={M.left} x2={w - M.right} y1={y(pos.stop)} y2={y(pos.stop)} />
                   <text className="levellabel levellabel--stop" x={M.left + 6} y={y(pos.stop)} dy="-0.45em">Stop {money(pos.stop)}</text>
+                </g>
+              )}
+              {pos?.target && (
+                <g>
+                  <line className="level level--target" x1={M.left} x2={w - M.right} y1={y(pos.target)} y2={y(pos.target)} />
+                  <text className="levellabel levellabel--target" x={M.left + 6} y={y(pos.target)} dy="1.15em">Take-profit {money(pos.target)}</text>
                 </g>
               )}
               {pos?.entry && (
@@ -340,7 +348,8 @@ export function TradeChart({
           {pos.entry != null && <> from {money(pos.entry)}{pos.opened && ` (${dateOf(pos.opened)})`}</>}
           {pos.pct != null && <>, now <span className={pos.pct < 0 ? "is-down" : "is-up"}>{pct(pos.pct, true, 1)}</span></>}
           {pos.peak_pct != null && <>. Best since buying: {pct(pos.peak_pct, true, 1)}</>}
-          {pos.stop != null && pos.entry != null && <>. Stop at {money(pos.stop)} ({pct((pos.stop / pos.entry - 1) * 100, true, 1)})</>}.
+          {pos.stop != null && pos.entry != null && <>. Stop at {money(pos.stop)} ({pct((pos.stop / pos.entry - 1) * 100, true, 1)})</>}
+          {pos.target != null && pos.entry != null && <>, take-profit at {money(pos.target)} ({pct((pos.target / pos.entry - 1) * 100, true, 1)})</>}.
         </p>
       )}
 

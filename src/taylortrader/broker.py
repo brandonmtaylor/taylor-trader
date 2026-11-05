@@ -102,13 +102,22 @@ class AlpacaBroker:
             if o.side == OrderSide.SELL and o.order_type in _STOP_TYPES
         }
 
-    def stop_prices(self) -> dict[str, float]:
-        """Each symbol's protective stop price at the broker (the highest, if there are several)."""
-        out: dict[str, float] = {}
-        for o in self.open_orders():
-            if o.side == OrderSide.SELL and o.order_type in _STOP_TYPES and o.stop_price is not None:
-                out[o.symbol] = max(out.get(o.symbol, 0.0), float(o.stop_price))
-        return out
+    def exit_levels(self) -> dict[str, dict]:
+        """Each symbol's protective orders at the broker: {"stop": price, "target": price}.
+        stop is the highest stop-loss; target is a take-profit (a limit sell that's a bracket leg).
+        A plain limit sell placed on its own is a sale in progress, not a target, so it's left out."""
+        out: dict[str, dict] = {}
+        orders = self._client.get_orders(GetOrdersRequest(status=QueryOrderStatus.OPEN, nested=True))
+        for top in orders:
+            for o, is_leg in [(top, False), *((leg, True) for leg in (top.legs or []))]:
+                if o.side != OrderSide.SELL:
+                    continue
+                lv = out.setdefault(o.symbol, {"stop": None, "target": None})
+                if o.order_type in _STOP_TYPES and o.stop_price is not None:
+                    lv["stop"] = max(lv["stop"] or 0.0, float(o.stop_price))
+                elif o.order_type == OrderType.LIMIT and is_leg and o.limit_price is not None:
+                    lv["target"] = float(o.limit_price)
+        return {s: lv for s, lv in out.items() if lv["stop"] is not None or lv["target"] is not None}
 
     def symbols_selling(self) -> set[str]:
         """Symbols with a sell waiting to fill (a close, not a protective stop or bracket leg),

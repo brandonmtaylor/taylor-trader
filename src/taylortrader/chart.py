@@ -47,7 +47,8 @@ def _bar_start(df: pd.DataFrame, when) -> pd.Timestamp:
 
 
 def build(symbol: str, period: str, df: pd.DataFrame, fills: list[Fill], strategy_of: dict[str, str],
-          decisions: list[dict], stop: float | None, held_qty: float, now: datetime) -> dict:
+          decisions: list[dict], stop: float | None, held_qty: float, now: datetime,
+          target: float | None = None) -> dict:
     days, timeframe = PERIODS[period]
     start = _ts(now) - timedelta(days=days)
     df = df[df.index >= start] if not df.empty else df
@@ -118,7 +119,7 @@ def build(symbol: str, period: str, df: pd.DataFrame, fills: list[Fill], strateg
         since = df[df.index >= _bar_start(df, last_buy.ts)] if (last_buy and not df.empty) else df.iloc[0:0]
         peak = float(since["high"].max()) if not since.empty else None
         position = {"qty": held_qty, "entry": entry, "opened": _ts(last_buy.ts).isoformat() if last_buy else None,
-                    "last": last, "stop": stop, "peak": peak,
+                    "last": last, "stop": stop, "target": target, "peak": peak,
                     "peak_pct": (peak / entry - 1) * 100 if (peak and entry) else None,
                     "pct": (last / entry - 1) * 100 if (last and entry) else None}
 

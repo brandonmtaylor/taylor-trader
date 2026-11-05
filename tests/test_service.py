@@ -85,6 +85,11 @@ class FakeBroker:
     def symbols_with_stop(self):
         return set(self.stops)
 
+    def exit_levels(self):
+        levels = getattr(self, "levels", {})  # tests set exact prices here; otherwise any stop will do
+        return {s: levels.get(s, {"stop": 1.0, "target": None}) for s in self.stops} | {
+            s: v for s, v in levels.items() if s not in self.stops}
+
     def symbols_selling(self):
         return set(self.selling)
 

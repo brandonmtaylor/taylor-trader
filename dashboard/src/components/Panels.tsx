@@ -162,7 +162,10 @@ export function Positions({ account, error, onSell, notice, marketOpen }: {
                 ? `${exposed} of ${rows.length} without a stop-loss at Alpaca.`
                 : waiting === rows.length
                   ? `Everything is being sold${marketOpen === false ? " at the next open" : ""}.`
-                  : "Every position has a stop-loss at Alpaca."}
+                  : `Every position has a stop-loss at Alpaca.${
+                    account?.stops_at_risk_usd != null
+                      ? ` If every stop fired: ${signedMoney(account.stops_at_risk_usd)} (${pct(account.stops_at_risk_usd / account.equity * 100, true, 1)} of the account).`
+                      : ""}`}
           </p>
         </div>
         {sellable.length > 0 && (
@@ -177,7 +180,8 @@ export function Positions({ account, error, onSell, notice, marketOpen }: {
             <thead>
               <tr>
                 <th>Symbol</th>
-                <th>Stop-loss</th>
+                <th title="The price where Alpaca sells automatically to limit the loss, and how far below today's price it is">Stop-loss</th>
+                <th title="The price where Alpaca sells automatically to lock in a gain">Take-profit</th>
                 <th>Managed by</th>
                 <th className="num">Value</th>
                 <th className="num">Of equity</th>
@@ -194,9 +198,29 @@ export function Positions({ account, error, onSell, notice, marketOpen }: {
                   <td>
                     {p.selling && !p.has_stop
                       ? <span className="muted">Not needed</span>
+                      : p.has_stop && p.stop_price != null
+                      ? (
+                        <span className="lvl">
+                          <span className="lvl__price">{money(p.stop_price)}</span>
+                          <span className="lvl__sub">
+                            {pct(p.stop_pct, true, 1)}
+                            {p.stop_loss_usd != null && <> · <span className="is-down">{signedMoney(p.stop_loss_usd)}</span></>}
+                          </span>
+                        </span>
+                      )
                       : p.has_stop
                       ? <span className="tag tag--good"><span aria-hidden="true">✓</span> At Alpaca</span>
                       : <span className="tag tag--crit"><span aria-hidden="true">✕</span> None</span>}
+                  </td>
+                  <td>
+                    {p.target_price != null
+                      ? (
+                        <span className="lvl">
+                          <span className="lvl__price">{money(p.target_price)}</span>
+                          <span className="lvl__sub is-up">{pct(p.target_pct, true, 1)}</span>
+                        </span>
+                      )
+                      : <span className="muted" title="No take-profit: the strategy decides when to sell. Set one per strategy.">Off</span>}
                   </td>
                   <td>{p.owner ?? <span className="tag tag--warn"><span aria-hidden="true">▲</span> Nobody</span>}</td>
                   <td className="num">{money(p.market_value)}</td>

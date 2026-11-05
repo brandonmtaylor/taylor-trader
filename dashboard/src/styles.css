@@ -721,3 +721,11 @@ select.input { width: 100%; }
 .table--conds { margin-top: 10px; }
 .table--conds td:first-child { white-space: normal; }
 .is-thin td { color: var(--ink-3); }
+
+/* stop-loss / take-profit cells */
+.lvl { display: inline-flex; flex-direction: column; line-height: 1.25; }
+.lvl__price { font-family: var(--f-num); font-size: 12.5px; }
+.lvl__sub { font-family: var(--f-num); font-size: 11.5px; color: var(--ink-3); }
+.swatch--target { height: 0; border-top: 2px dashed var(--up); background: none; }
+.level--target { stroke: var(--up); }
+.levellabel--target { fill: var(--up); }

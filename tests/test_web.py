@@ -329,7 +329,7 @@ def test_trade_chart_and_ai_grades(client):
     now = datetime.now(UTC)
     client.broker.fills = lambda: [Fill(now - timedelta(hours=20), "VRT", "buy", 10, 110.0, "b1"),
                                    Fill(now - timedelta(hours=1), "BTC/USD", "buy", 1, 1.0, "c1")]
-    client.broker.stop_prices = lambda: {"VRT": 99.0}
+    client.broker.levels = {"VRT": {"stop": 99.0, "target": None}}
     d = client.get("/api/chart?period=1W").json()
     assert d["symbol"] == "VRT" and "BTC/USD" not in d["symbols"] and "AAPL" in d["symbols"]
     assert d["marks"][0]["side"] == "buy" and d["position"]["stop"] == 99.0
@@ -339,3 +339,16 @@ def test_trade_chart_and_ai_grades(client):
     client.rt.journal.db.execute("UPDATE ai_decisions SET ts=?", ((now - timedelta(hours=20)).isoformat(),))
     g = client.get("/api/ai/grades").json()
     assert g["graded"] == 1 and g["recent"][0]["verdict"] == "wrong"  # it held, then the price rose
+
+
+def test_positions_show_stop_and_target_levels(client):
+    client.broker.levels = {"VRT": {"stop": 200.0, "target": 260.0}}
+    a = client.get("/api/account").json()
+    vrt = next(p for p in a["positions"] if p["symbol"] == "VRT")
+    assert vrt["price"] == pytest.approx(224)
+    assert vrt["stop_price"] == 200 and vrt["stop_pct"] == pytest.approx((200 / 224 - 1) * 100)
+    assert vrt["stop_loss_usd"] == pytest.approx(-240)  # 10 shares, $24 each down to the stop
+    assert vrt["target_pct"] == pytest.approx((260 / 224 - 1) * 100)
+    aapl = next(p for p in a["positions"] if p["symbol"] == "AAPL")
+    assert aapl["stop_price"] is None and not aapl["has_stop"]
+    assert a["stops_at_risk_usd"] == pytest.approx(-240)

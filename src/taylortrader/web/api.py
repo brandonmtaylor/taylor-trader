@@ -91,6 +91,18 @@ def _broker_call(fn):
         raise HTTPException(503, f"Can't reach Alpaca: {type(e).__name__}: {e}") from None
 
 
+def exit_fields(lv: dict, price: float, qty: float) -> dict:
+    """Where a position's stop-loss and take-profit sit, as prices and as distances from now."""
+    stop, target = lv.get("stop"), lv.get("target")
+    return {
+        "stop_price": stop,
+        "stop_pct": (stop / price - 1) * 100 if stop and price else None,
+        "stop_loss_usd": (stop - price) * qty if stop and price else None,
+        "target_price": target,
+        "target_pct": (target / price - 1) * 100 if target and price else None,
+    }
+
+
 def _iso(dt) -> str | None:
     return dt.isoformat() if dt else None
 
@@ -266,11 +278,12 @@ def create_app(rt: Runtime, cache_ttl: float = 10.0, project: Path = PROJECT) ->
 
         def load():
             snap = _broker_call(broker.snapshot)
-            stops = _broker_call(broker.symbols_with_stop)
+            levels = _broker_call(broker.exit_levels)
             selling = _broker_call(broker.symbols_selling)
-            return snap, stops, selling
+            return snap, levels, selling
 
-        snap, stops, selling = cache.get("account", load)
+        snap, levels, selling = cache.get("account", load)
+        stops = {s for s, lv in levels.items() if lv["stop"] is not None}
         own = owners()
         problems = find_unmanaged_positions(snap.positions, stops, own)
         positions = []
@@ -282,10 +295,14 @@ def create_app(rt: Runtime, cache_ttl: float = 10.0, project: Path = PROJECT) ->
                 "avg_entry_price": p.avg_entry_price, "price": price,
                 "unrealized_pct": (price / p.avg_entry_price - 1) * 100 if p.avg_entry_price else None,
                 "has_stop": p.symbol in stops, "owner": own.get(p.symbol),
+                **exit_fields(levels.get(p.symbol, {}), price, p.qty),
                 "selling": p.symbol in selling,
                 "issues": problems.get(p.symbol, []),
             })
+        at_risk = [x["stop_loss_usd"] for x in positions if x["stop_loss_usd"] is not None and not x["selling"]]
         return {
+            # What the account loses from here if every stop-loss fires (positions with a known stop).
+            "stops_at_risk_usd": sum(at_risk) if at_risk else None,
             "equity": snap.equity, "cash": snap.cash, "day_start_equity": snap.day_start_equity,
             "day_pnl_pct": (snap.equity / snap.day_start_equity - 1) * 100 if snap.day_start_equity else 0,
             "trades_today": snap.trades_today,
@@ -425,10 +442,10 @@ def create_app(rt: Runtime, cache_ttl: float = 10.0, project: Path = PROJECT) ->
             return add_all(df) if not df.empty else df
 
         df = slow_cache.get(f"bars:{symbol}:{period}", load)
-        stops = cache.get("stops", lambda: _broker_call(getattr(broker, "stop_prices", dict)))
+        levels = cache.get("levels", lambda: _broker_call(broker.exit_levels)).get(symbol, {})
         pos = held.get(symbol)
-        out = chart.build(symbol, period, df, fills, strategy_of, all_ai(days + 1), stops.get(symbol),
-                          pos.qty if pos else 0.0, now)
+        out = chart.build(symbol, period, df, fills, strategy_of, all_ai(days + 1), levels.get("stop"),
+                          pos.qty if pos else 0.0, now, target=levels.get("target"))
         return {"symbols": symbols, **out}
 
     @app.get("/api/settings")
