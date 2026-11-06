@@ -89,6 +89,10 @@ stop, alerts reach my phone, and paper results roughly match the backtest for th
 
 ### M3: Live, small
 - Small amount of money, tight limits; raise them only as results earn it
+- Go live with what has evidence. First the invest plan (see "What the tests found" below). A trading
+  strategy goes live when it passes `taylortrader search` on a list chosen without hindsight (beats
+  buy-and-hold on the holdout and beats random entries), or deliberately as a small, labeled
+  experiment. Strategies that haven't passed stay on paper; they aren't removed
 - Decide position sizing first. On paper, each strategy gets 50% of the account with a 12% stop, so
   one stopped trade loses ~6% of the account: double the 3% daily loss limit, which therefore blocks
   new buys every day a stop fires (first seen 2026-11-05: VRT stopped out, two rebuys blocked). The
@@ -96,7 +100,33 @@ stop, alerts reach my phone, and paper results roughly match the backtest for th
   with an 8% stop. Pick one: smaller positions/tighter stops, a higher daily limit, or keep "a stop
   fired, no more buying today" on purpose
 
-### Long-term investing (planned; slot TBD)
+### What the tests found (2026-11-05/06)
+The honest tools (replay, search with a holdout, the luck test) were pointed at the strategies
+before any real money. Recorded here so the reasoning survives; numbers are in `var/search/`.
+- **AI strategy** (Claude Sonnet via Claude Code, price data only, disguised): about 500 replayed
+  decisions over 180 days. As configured it never bought. With looser wording it bought 18 times, all
+  under the confidence needed to trade, and those picks did worse than the cheap rule alone.
+  Prompt tuning stopped there (with ~100 test moments, rewording finds luck). Not tested: with news.
+- **Strategy search**: 28 candidates (the built-ins, five rule strategies, 8% and 12% stops), each
+  searched on the older 70% and the winner tested once on the newest 30%:
+  - The bot's own five stocks (hourly 2 years, daily 6 years): nothing beat holding. These had huge
+    runs (PLTR, NVDA, VRT), and picking them with hindsight makes holding hard to beat.
+  - Fixed lists, no hindsight (the Dow 30 of 2020, the 9 sector funds), daily, 7 years: nothing beat
+    holding on the holdout. MACD with a 12% stop came closest: on the Dow its timing beat 99% of
+    random entries, it was in the market ~39% of the time, and its worst drop was a third smaller
+    (-20% vs. -31%). With 4% a year on idle cash it trailed holding by ~10 points on the holdout, and
+    beat it in the sector funds' search period (+92% vs. +74%) but not their holdout.
+- **So**: for growth, a held mix is the evidence-backed default, which is what the invest plan does.
+  Trading strategies aren't disproven: these were a few lists and one stretch of years, mostly a rising
+  market. MACD looks like a risk reducer (smaller drops, less growth). Strategies stay first-class:
+  easy to change, a no-code `rule` strategy for writing new ones, and the search to test them,
+  because the point is that anyone can try ideas and the tools will tell them honestly.
+- The holdouts above have each been looked at (logged in `var/search/holdout-looks.jsonl`). Retesting
+  new ideas should use new lists or new months, not the same holdout again.
+- Private work (e.g. an ML filter on top of a rule) can plug in as its own package that registers a
+  strategy; the bar it has to clear is the same: the holdout and the luck test.
+
+### Long-term investing (built 2026-11-05: phases 1-2)
 For people who want a diversified portfolio built up over time, not trading: the same safety and
 dashboard, with no strategies, signals or stop-losses involved.
 - An **invest plan**: target weights (e.g. a few broad ETFs), and how to get there: invest $X every
