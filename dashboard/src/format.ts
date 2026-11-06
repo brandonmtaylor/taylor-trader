@@ -12,7 +12,7 @@ export function pct(n: number | null | undefined, signed = true, digits = 2): st
 }
 
 export function qty(n: number): string {
-  return Number.isInteger(n) ? n.toLocaleString("en-US") : n.toPrecision(4);
+  return n.toLocaleString("en-US", { maximumFractionDigits: 4 });
 }
 
 export function ago(seconds: number): string {

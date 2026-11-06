@@ -1,6 +1,7 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { send, type Setup, type Status } from "../api";
 import { ago, marketTime } from "../format";
+import { useNow } from "../usePoll";
 import { GoLiveDialog } from "./ModeDialog";
 
 const W = 600;
@@ -43,6 +44,77 @@ function Trace({ ageS, windowS, beatKey }: { ageS: number | null; windowS: numbe
   );
 }
 
+/** The heartbeat's age, ticking every second. Only the small parts below use it, so the clock
+ *  re-renders them and not the whole dashboard. */
+function useHeartbeat(status: Status | null) {
+  const now = useNow(1000);
+  const hb = status?.heartbeat;
+  // Age from the heartbeat timestamp, corrected for any clock difference with the server. Measured
+  // once per status: measured on every render, it would cancel the ticking clock out.
+  const skew = useMemo(() => (status ? Date.now() - new Date(status.server_time).getTime() : 0), [status]);
+  const ageS = hb?.ts ? Math.max(0, (now - skew - new Date(hb.ts).getTime()) / 1000) : null;
+  const stale = ageS == null || (hb ? ageS > hb.stale_after_s : true);
+  return { hb, ageS, stale };
+}
+
+function Pulse({ status }: { status: Status | null }) {
+  const { hb, ageS } = useHeartbeat(status);
+  return (
+    <div className="pulse">
+      <Trace ageS={ageS} windowS={hb?.stale_after_s ?? 900} beatKey={hb?.ts ?? "none"} />
+      <div className="pulse__scale" aria-hidden="true">
+        <span>{Math.round((hb?.stale_after_s ?? 900) / 60)} min ago</span>
+        <span>now</span>
+      </div>
+    </div>
+  );
+}
+
+function ServiceReadout({ status }: { status: Status | null }) {
+  const { ageS, stale } = useHeartbeat(status);
+  return (
+    <div className={`readout ${stale ? "readout--crit" : "readout--good"}`}>
+      <dt>Service</dt>
+      <dd>
+        <span className="glyph" aria-hidden="true">{stale ? "✕" : "●"}</span>
+        {ageS == null
+          ? "No heartbeat yet"
+          : stale
+            ? `Not running · last beat ${ago(ageS)}`
+            : `Running · beat ${ago(ageS)}`}
+      </dd>
+    </div>
+  );
+}
+
+function ServiceNotes({ status, setup, busy, onStart }: {
+  status: Status | null; setup: Setup | null; busy: boolean; onStart: () => void;
+}) {
+  const { ageS, stale } = useHeartbeat(status);
+  // The service reports what it's running as; after a switch it catches up on its next check.
+  const reported = status?.running_mode ? (status.running_mode === "dry-run" ? "dry-run" : "trading") : null;
+  const catchingUp = !stale && reported != null && (reported === "dry-run") !== Boolean(status?.dry_run);
+  return (
+    <>
+      {catchingUp && (
+        <p className="masthead__note" role="status">
+          Switched to {status!.mode_label}. The service is still running as {reported === "dry-run" ? "dry run" : "a trading bot"} and
+          picks up the change on its next check.
+        </p>
+      )}
+      {status?.configured && stale && (
+        <p className="masthead__alert" role="alert">
+          {ageS == null ? "The service hasn't started yet, so nothing is being watched. " :
+            "The service isn't running, so nothing is being traded or watched. Your stop-losses at Alpaca still work. "}
+          {setup?.service.supported
+            ? <button type="button" className="btn btn--sm" disabled={busy || !status.connected} onClick={onStart}>Start the service</button>
+            : <>Start it with <code>uv run taylortrader run</code>.</>}
+        </p>
+      )}
+    </>
+  );
+}
+
 type ModeId = "dry-run" | "paper" | "live";
 const MODES: { id: ModeId; label: string }[] = [
   { id: "dry-run", label: "Dry run" },
@@ -58,8 +130,8 @@ const NAV = [
   { href: "#/guide", label: "Guide" },
 ];
 
-export function Header({ status, setup, now, error, route, onStatus, onSetup }: {
-  status: Status | null; setup: Setup | null; now: number; error: string | null; route: string;
+export function Header({ status, setup, error, route, onStatus, onSetup }: {
+  status: Status | null; setup: Setup | null; error: string | null; route: string;
   onStatus: (s?: Status) => void; onSetup: (s: Setup) => void;
 }) {
   const [liveOpen, setLiveOpen] = useState(false);
@@ -67,14 +139,6 @@ export function Header({ status, setup, now, error, route, onStatus, onSetup }: 
   const [actionError, setActionError] = useState<string | null>(null);
   const mode = status?.mode ?? "paper";
   const current: ModeId = status ? (status.dry_run ? "dry-run" : status.mode) : "paper";
-  const hb = status?.heartbeat;
-  // Age from the heartbeat timestamp, corrected for any clock difference with the server.
-  const skew = status ? Date.now() - new Date(status.server_time).getTime() : 0;
-  const ageS = hb?.ts ? (now - skew - new Date(hb.ts).getTime()) / 1000 : null;
-  const stale = ageS == null || (hb ? ageS > hb.stale_after_s : true);
-  // The service reports what it's running as; after a switch it catches up on its next check.
-  const reported = status?.running_mode ? (status.running_mode === "dry-run" ? "dry-run" : "trading") : null;
-  const catchingUp = !stale && reported != null && (reported === "dry-run") !== Boolean(status?.dry_run);
 
   async function act(fn: () => Promise<unknown>) {
     setBusy(true);
@@ -132,26 +196,10 @@ export function Header({ status, setup, now, error, route, onStatus, onSetup }: 
           </nav>
         </div>
 
-        <div className="pulse">
-          <Trace ageS={ageS} windowS={hb?.stale_after_s ?? 900} beatKey={hb?.ts ?? "none"} />
-          <div className="pulse__scale" aria-hidden="true">
-            <span>{Math.round((hb?.stale_after_s ?? 900) / 60)} min ago</span>
-            <span>now</span>
-          </div>
-        </div>
+        <Pulse status={status} />
 
         <dl className="readouts">
-          <div className={`readout ${stale ? "readout--crit" : "readout--good"}`}>
-            <dt>Service</dt>
-            <dd>
-              <span className="glyph" aria-hidden="true">{stale ? "✕" : "●"}</span>
-              {ageS == null
-                ? "No heartbeat yet"
-                : stale
-                  ? `Not running · last beat ${ago(ageS)}`
-                  : `Running · beat ${ago(ageS)}`}
-            </dd>
-          </div>
+          <ServiceReadout status={status} />
           <div className="readout">
             <dt>Market</dt>
             <dd>
@@ -179,21 +227,7 @@ export function Header({ status, setup, now, error, route, onStatus, onSetup }: 
         </dl>
       </div>
 
-      {catchingUp && (
-        <p className="masthead__note" role="status">
-          Switched to {status!.mode_label}. The service is still running as {reported === "dry-run" ? "dry run" : "a trading bot"} and
-          picks up the change on its next check.
-        </p>
-      )}
-      {status?.configured && stale && (
-        <p className="masthead__alert" role="alert">
-          {ageS == null ? "The service hasn't started yet, so nothing is being watched. " :
-            "The service isn't running, so nothing is being traded or watched. Your stop-losses at Alpaca still work. "}
-          {setup?.service.supported
-            ? <button type="button" className="btn btn--sm" disabled={busy || !status.connected} onClick={startService}>Start the service</button>
-            : <>Start it with <code>uv run taylortrader run</code>.</>}
-        </p>
-      )}
+      <ServiceNotes status={status} setup={setup} busy={busy} onStart={startService} />
       {status && status.configured && !status.connected && (
         <p className="masthead__alert" role="alert">
           Not connected to Alpaca: {status.broker_error} <a href="#/settings">Open settings</a>

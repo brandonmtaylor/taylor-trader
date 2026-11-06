@@ -7,7 +7,7 @@ import { niceTicks } from "./EquityChart";
 const EVERY_WORD: Record<InvestEvery, string> = { week: "every week", "2weeks": "every 2 weeks", month: "every month", once: "once" };
 const M = { top: 14, right: 72, bottom: 24, left: 56 };
 const H = 230;
-const monthYear = (t: number) => new Date(t * 1000).toLocaleDateString(undefined, { month: "short", year: "numeric" });
+const monthYear = (t: number) => new Date(t * 1000).toLocaleDateString(undefined, { month: "short", year: "numeric", timeZone: "UTC" });
 
 /** Your plan's amount and schedule, run on the past: your mix and each ready-made one. */
 export function WhatIf() {

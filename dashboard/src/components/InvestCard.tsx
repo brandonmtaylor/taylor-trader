@@ -4,8 +4,16 @@ import { money } from "../format";
 const EVERY_WORD = { week: "a week", "2weeks": "every 2 weeks", month: "a month", once: "once" } as const;
 
 /** The invest plan at a glance, on the Overview. The Invest page has the rest. */
-export function InvestCard({ data }: { data: InvestResp | null }) {
-  if (!data) return null;
+export function InvestCard({ data, error }: { data: InvestResp | null; error: string | null }) {
+  if (!data) {
+    if (!error) return null;
+    return (
+      <section className="panel" aria-labelledby="invcard-title">
+        <h2 id="invcard-title">Invest plan</h2>
+        <p className="empty">Can't load the invest plan: {error}</p>
+      </section>
+    );
+  }
   const st = data.status;
   if (!data.plan.enabled || !st) {
     return (

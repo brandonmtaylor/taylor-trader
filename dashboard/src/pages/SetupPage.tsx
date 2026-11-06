@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { Setup, StrategyCfg } from "../api";
 import { NoticeLine, useAction } from "../components/forms";
 import { AlpacaKeys } from "../components/Keys";
@@ -12,8 +12,12 @@ export function SetupPage({ store, setup, onSetup }: { store: SettingsStore; set
   const resp = store.resp;
   const [strategy, setStrategy] = useState<StrategyCfg>(() => ({ ...clone(NEW_STRATEGY), allocation_pct: 20, stop_loss_pct: 12 }));
   const act = useAction();
+  // Once only: settings reload after any save on this page, and that mustn't wipe unsaved edits here.
+  const loaded = useRef(false);
   useEffect(() => {
-    if (resp?.config.strategies.length) setStrategy(clone(resp.config.strategies[0]));
+    if (!resp || loaded.current) return;
+    loaded.current = true;
+    if (resp.config.strategies.length) setStrategy(clone(resp.config.strategies[0]));
   }, [resp]);
   if (!resp || !setup) return <main className="page"><p className="empty">{store.error ?? "Loading…"}</p></main>;
 
