@@ -523,6 +523,40 @@ def create_app(rt: Runtime, cache_ttl: float = 10.0, project: Path = PROJECT) ->
     def invest_history() -> list[dict[str, Any]]:
         return rt.journal.invest_history() if rt.journal else []
 
+    @app.get("/api/invest/whatif")
+    def invest_whatif(years: int = Query(10, ge=1, le=12)) -> dict[str, Any]:
+        """Your plan's amount and schedule, run on the past with your mix and each example mix."""
+        from taylortrader import whatif
+        from taylortrader.config import InvestConfig
+        from taylortrader.invest import EXAMPLES
+
+        data = need_data()
+        inv = rt.settings.invest
+        amount = inv.amount if inv.amount >= 1 else 200.0
+        every, day = (inv.every, inv.day) if inv.amount >= 1 else ("month", 1)
+        mixes = ([{"id": "yours", "name": "Your mix", "holdings": inv.holdings}] if inv.holdings else []) + [
+            {"id": e["id"], "name": e["name"], "holdings": e["holdings"]} for e in EXAMPLES]
+        start = (datetime.now(UTC) - timedelta(days=round(365.25 * years))).date()
+        key = ("whatif", years, amount, every, day, tuple((h["symbol"], h["weight"]) for h in inv.holdings))
+
+        def load():
+            symbols = sorted({h["symbol"] for m in mixes for h in m["holdings"]})
+            fetch_from = datetime.combine(start, datetime.min.time(), UTC) - timedelta(days=7)
+            prices = {s: data.bars(s, "1Day", fetch_from) for s in symbols}
+            out = []
+            for m in mixes:
+                plan = InvestConfig(enabled=True, amount=amount, every=every, day=day, holdings=m["holdings"])
+                try:
+                    r = whatif.simulate({s: prices[s] for s in plan.symbols}, plan, start)
+                except Exception as e:  # noqa: BLE001 - one mix without data shouldn't hide the others
+                    log.warning("what-if %s failed: %s", m["id"], e)
+                    r = None
+                out.append({**m, "result": r, "short": bool(r and r["from"] > (start + timedelta(days=10)).isoformat())})
+            return out
+
+        return {"years": years, "amount": amount, "every": every, "day": day, "start": start.isoformat(),
+                "mixes": slow_cache.get(key, load)}
+
     @app.put("/api/invest", dependencies=[Depends(guard)])
     def put_invest(body: InvestBody) -> dict[str, Any]:
         """Save the invest plan. Turning on real buying needs `confirm`: the exact amount and schedule

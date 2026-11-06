@@ -760,3 +760,16 @@ select.input { width: 100%; }
 .holdings__total { font-size: 13px; color: var(--ink-3); }
 .segmented--wrap { flex-wrap: wrap; flex-shrink: 1; width: fit-content; max-width: 100%; border-radius: 18px; }
 .invest-fields { margin-top: 16px; }
+
+/* what if: worth (series 1) against money put in (muted dashed steps) */
+.line--putin { stroke: var(--ink-3); stroke-width: 1.5; stroke-dasharray: 4 3; }
+.swatch--putin { height: 0; border-top: 2px dashed var(--ink-3); background: none; }
+.dot--putin { fill: var(--ink-3); stroke: var(--sheet); stroke-width: 2; }
+.whatif td:first-child { white-space: normal; }
+.whatif__pick { all: unset; cursor: pointer; font-weight: 500; border-bottom: 1px dashed var(--rule); }
+.whatif__pick:hover { border-bottom-color: var(--ink-3); }
+.whatif__pick:focus-visible { outline: 2px solid var(--series-1); outline-offset: 2px; border-radius: 2px; }
+.whatif tr.is-on td { background: color-mix(in srgb, var(--series-1) 6%, var(--sheet)); }
+.whatif tr.is-on .whatif__pick { border-bottom-color: var(--series-1); }
+.whatif__since { display: block; font-size: 12px; color: var(--ink-3); }
+.whatif__chart { margin-top: 14px; }

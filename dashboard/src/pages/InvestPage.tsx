@@ -1,6 +1,7 @@
 import { useEffect, useId, useRef, useState } from "react";
 import { send, type Contribution, type Holding, type InvestEvery, type InvestPlan, type InvestResp, type InvestStatus } from "../api";
 import { Labeled, NoticeLine, NumberInput, Toggle, useAction } from "../components/forms";
+import { WhatIf } from "../components/WhatIf";
 import { money, pct } from "../format";
 import { clone, same } from "../settings";
 import { usePoll } from "../usePoll";
@@ -67,6 +68,7 @@ export function InvestPage() {
       {resp.error && <p className="notice notice--crit">Can't reach Alpaca: {resp.error}</p>}
       <div className="stack">
         {resp.status && resp.plan.enabled && <PlanStatus status={resp.status} cash={resp.cash} />}
+        <WhatIf />
         <PlanEditor draft={draft} resp={resp} onChange={setDraft} />
         {resp.history.length > 0 && <History rows={resp.history} />}
       </div>

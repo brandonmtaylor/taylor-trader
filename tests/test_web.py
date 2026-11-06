@@ -417,3 +417,14 @@ def test_invest_history_groups_contributions(client):
     hist = client.get("/api/invest").json()["history"]
     assert hist[0]["period"] == "2026-10" and hist[0]["total"] == 200
     assert {b["status"] for b in hist[0]["buys"]} == {"submitted", "filled"}
+
+
+def test_invest_whatif_runs_your_mix_and_the_examples(client):
+    r = client.get("/api/invest/whatif?years=1")
+    assert r.status_code == 200, r.text
+    body = r.json()
+    ids = [m["id"] for m in body["mixes"]]
+    assert ids[0] == "three-80" and "world" in ids          # no plan yet: just the examples
+    assert body["amount"] == 200 and body["every"] == "month"
+    res = body["mixes"][0]["result"]
+    assert res["put_in"] > 0 and res["series"]["value"]

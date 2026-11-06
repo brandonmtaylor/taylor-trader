@@ -426,3 +426,24 @@ export interface InvestResp {
   cash: number | null;
   error: string | null;
 }
+
+export interface WhatIfResult {
+  from: string;
+  to: string;
+  contributions: number;
+  put_in: number;
+  value: number;
+  gain_pct: number | null;
+  worst_drop_pct: number;
+  lump: { value: number; gain_pct: number | null; worst_drop_pct: number };
+  series: { value: Point[]; put_in: Point[] };
+}
+
+export interface WhatIfResp {
+  years: number;
+  amount: number;
+  every: InvestEvery;
+  day: number;
+  start: string;
+  mixes: { id: string; name: string; holdings: Holding[]; short: boolean; result: WhatIfResult | null }[];
+}
