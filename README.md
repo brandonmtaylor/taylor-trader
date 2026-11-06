@@ -183,7 +183,8 @@ timed ("did we sell VRT too early?").
 It runs on your Mac and uses the same rules as the dashboard: every change is validated, hard
 limits still apply, and changes are logged as coming from Claude. Selling needs the exact
 confirmation (the symbol, or `SELL ALL`). It can't switch to live trading or read or change keys;
-those stay in the dashboard.
+those stay in the dashboard. On a live account it can add, edit and remove strategies, which affects
+real money within your limits, but it can't loosen those limits.
 
 ## License
 [Functional Source License 1.1, Apache 2.0 future license](LICENSE.md) (FSL-1.1-ALv2). Use it, change

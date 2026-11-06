@@ -24,7 +24,7 @@ def server(tmp_path, monkeypatch):
     return srv
 
 
-def call(srv, name, **args):
+def call(srv, name, /, **args):
     from mcp.server.mcpserver.exceptions import ToolError
 
     try:
@@ -94,15 +94,67 @@ def test_invest_plan_can_be_read_and_turned_down_but_not_up(server):
     assert "set_invest_plan_state" in tools and not any("start" in t and "invest" in t for t in tools)
 
 
-def test_claude_cant_add_risk_to_a_live_account(server):
+def go_live(server):
     c = server.client
+    with (c.path.parent / ".env").open("a") as f:
+        f.write("ALPACA_LIVE_KEY_ID=goodlive\nALPACA_LIVE_SECRET_KEY=s3cretlive\nTAYLORTRADER_ALLOW_LIVE=1\n")
     save_config(dataclasses.replace(load_config(c.path), mode="live"), c.path)
     c.rt.reload()
-    for tool, args in [("add_strategy", {"name": "macd_rsi", "symbols": ["AAPL"]}),
-                       ("update_strategy", {"number": 1, "allocation_pct": 20}),
-                       ("update_limits", {"max_daily_loss_pct": 5})]:
-        with pytest.raises(Exception, match="real money"):
-            r = asyncio.run(server.call_tool(tool, args))
-            if r.is_error:
-                raise RuntimeError("".join(getattr(c, "text", "") for c in r.content))
+    return c
+
+
+def test_claude_cant_loosen_limits_on_a_live_account(server):
+    go_live(server)
+    with pytest.raises(RuntimeError, match="real money"):
+        call(server, "update_limits", max_daily_loss_pct=5)
     call(server, "update_limits", max_daily_loss_pct=1)  # tightening still works
+
+
+def test_claude_can_edit_a_strategy_on_a_live_account(server):
+    c = go_live(server)
+    call(server, "update_strategy", number=1, allocation_pct=20)
+    assert load_config(c.path).strategies[0].allocation_pct == 20
+    with pytest.raises(RuntimeError):  # past the stop-loss limit: refused, same as the dashboard
+        call(server, "update_strategy", number=1, stop_loss_pct=99)
+
+
+def test_dropping_a_held_symbol_on_live_needs_confirming(server):
+    c = go_live(server)
+    with pytest.raises(RuntimeError, match="KEEP OPEN"):
+        call(server, "remove_strategy", number=1)
+    with pytest.raises(RuntimeError, match="KEEP OPEN"):
+        call(server, "update_strategy", number=1, symbols=["NVDA"])
+    assert load_config(c.path).strategies[0].symbols == ["VRT"]
+    call(server, "remove_strategy", number=1, confirm="KEEP OPEN")
+    assert load_config(c.path).strategies == []
+
+
+def test_removing_a_strategy_with_nothing_held_needs_no_confirming(server):
+    c = go_live(server)
+    call(server, "add_strategy", name="rule", symbols=["NVDA"])
+    call(server, "remove_strategy", number=2)
+    assert len(load_config(c.path).strategies) == 1
+
+
+def test_a_described_strategy_can_be_added_as_rules(server):
+    words = call(server, "get_strategies")["rule_language"]
+    assert "rsi" in words["names"] and "ma_200" in words["names"]
+    rules = {"buy_when": "prev_rsi < 30 and rsi >= 30", "sell_when": "rsi > 70"}
+    out = call(server, "add_strategy", name="rule", symbols=["aapl"], timeframe="1Day", params=rules)
+    assert out["strategies"][-1]["params"] == rules
+    assert load_config(server.client.path).strategies[-1].symbols == ["AAPL"]
+
+
+def test_a_rule_it_cant_read_is_refused_and_not_saved(server):
+    with pytest.raises(RuntimeError, match="unknown name"):
+        call(server, "add_strategy", name="rule", symbols=["AAPL"], params={"buy_when": "earnings > 0"})
+    assert len(load_config(server.client.path).strategies) == 1
+
+
+def test_claude_can_add_a_strategy_on_a_live_account_within_the_limits(server):
+    c = go_live(server)
+    call(server, "add_strategy", name="rule", symbols=["AAPL"], allocation_pct=10, stop_loss_pct=8)
+    assert load_config(c.path).strategies[-1].symbols == ["AAPL"]
+    with pytest.raises(RuntimeError):  # past the stop-loss limit: refused, same as the dashboard
+        call(server, "add_strategy", name="rule", symbols=["MSFT"], stop_loss_pct=99)
+    assert len(load_config(c.path).strategies) == 2
