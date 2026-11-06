@@ -33,6 +33,8 @@ from taylortrader.strategies import get_strategy, list_strategies
 
 log = logging.getLogger("taylortrader")
 
+DASHBOARD_PORT = 8787  # the background agent always uses this one (see launchd.py)
+
 
 def _parse_params(items: list[str]) -> dict:
     params = {}
@@ -109,6 +111,19 @@ def cmd_backtest(args) -> int:
     from taylortrader import backtest
     from taylortrader.data import MarketData
 
+    if args.all:
+        names = [s["name"] for s in list_strategies() if s["backtestable"]]
+        skipped = [s["name"] for s in list_strategies() if not s["backtestable"]]
+        if skipped:
+            print(f"Skipping {', '.join(skipped)}: it can't be backtested honestly.")
+    else:
+        names = [args.strategy]
+    try:  # before fetching anything: a mistyped name or parameter shouldn't wait on a download
+        strategies = [get_strategy(name, None if args.all else _parse_params(args.param)) for name in names]
+    except ValueError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 2
+
     cfg = load_config(args.config)
     creds = load_alpaca_credentials("paper")  # data only; never needs live keys
     # Yahoo only keeps ~60 days of 5-minute bars, so backtests use Alpaca. SIP is the closest match:
@@ -116,21 +131,29 @@ def cmd_backtest(args) -> int:
     md = MarketData(creds, cfg.data_dir / "cache", feed=args.feed or ("sip" if cfg.feed == "yahoo" else cfg.feed))
     start = datetime.now(UTC) - timedelta(days=args.days)
     df = md.bars(args.symbol.upper(), args.timeframe, start)
+    if df.empty:
+        print(f"error: no {args.timeframe} bars for {args.symbol.upper()} in the last {args.days} days",
+              file=sys.stderr)
+        return 2
     print(f"{args.symbol.upper()} {args.timeframe} {md.feed.upper()}: {len(df):,} bars "
           f"({df.index[0].date()} to {df.index[-1].date()})")
 
-    names = [s["name"] for s in list_strategies()] if args.all else [args.strategy]
     rows = []
-    for name in names:
-        strat = get_strategy(name, _parse_params(args.param) if not args.all else None)
-        r = backtest.run(df, strat, allocation_pct=args.allocation, stop_loss_pct=args.stop,
-                         take_profit_pct=args.take_profit, slippage_bps=args.slippage,
-                         cash_yield_pct=args.cash_yield)
+    for strat in strategies:
+        try:
+            r = backtest.run(df, strat, allocation_pct=args.allocation, stop_loss_pct=args.stop,
+                             take_profit_pct=args.take_profit, slippage_bps=args.slippage,
+                             cash_yield_pct=args.cash_yield)
+        except ValueError as e:  # too few bars, or a strategy that can't be backtested
+            print(f"error: {e}" if not args.all else f"  skipping {strat.name}: {e}", file=sys.stderr)
+            continue
         rows.append(r.summary())
         if not args.all and args.trades:
             for t in r.trades:
                 print(f"  {t.entry_time:%Y-%m-%d %H:%M} -> {t.exit_time:%Y-%m-%d %H:%M}  "
                       f"{t.return_pct:+6.2f}%  in: {t.entry_reason} | out: {t.exit_reason}")
+    if not rows:
+        return 2
     import pandas as pd
 
     table = pd.DataFrame(rows).set_index("strategy").drop(columns=["period", "bars"])
@@ -237,6 +260,11 @@ def cmd_search(args) -> int:
     from taylortrader import search
     from taylortrader.data import MarketData
 
+    try:
+        stops = tuple(float(x) for x in args.stops.split(","))
+    except ValueError:
+        print(f"error: --stops needs percentages separated by commas, like 8,12 (got {args.stops!r})", file=sys.stderr)
+        return 2
     cfg = load_config(args.config)
     if args.universe:
         symbols = list(search.UNIVERSES[args.universe])
@@ -256,6 +284,9 @@ def cmd_search(args) -> int:
             print(f"  skipping {sym}: only {len(df)} bars")
             continue
         frames[sym] = df
+    if not frames:
+        print("error: no symbol had enough history", file=sys.stderr)
+        return 2
     # A stock that stopped trading (bought out, delisted) would end early and get its own holdout dates.
     # It's dropped and named, since dropping a stock that ended badly flatters buy-and-hold.
     last = max(df.index[-1] for df in frames.values())
@@ -264,10 +295,6 @@ def cmd_search(args) -> int:
         print(f"  dropping {s}: its data ends {frames[s].index[-1].date()} (stopped trading?). Keep this in mind: "
               "dropping stocks that ended makes holding look better than it was.")
         del frames[s]
-    if not frames:
-        print("error: no symbol had enough history", file=sys.stderr)
-        return 2
-    stops = tuple(float(x) for x in args.stops.split(","))
     grid = search.default_grid(stops)
     print(f"{', '.join(frames)} {args.timeframe}, last {args.days} days. Trying {len(grid)} candidates on the "
           f"older {100 - args.holdout:g}%, then the winner once on the newest {args.holdout:g}%.")
@@ -445,6 +472,11 @@ def cmd_install_service(args) -> int:
 
 def cmd_dashboard(args) -> int:
     """Works before anything is set up: the dashboard is where setup happens."""
+    if args.port != DASHBOARD_PORT and (args.background or args.restart):
+        print(f"error: the background dashboard always uses port {DASHBOARD_PORT}. Drop --port, or run "
+              f"`taylortrader dashboard --port {args.port}` to use that port in this terminal.", file=sys.stderr)
+        return 2
+
     import threading
     import webbrowser
 
@@ -606,7 +638,7 @@ def main(argv: list[str] | None = None) -> int:
     inst.add_argument("--dry-run", action="store_true", help="service decides and alerts but never orders")
     inst.set_defaults(fn=cmd_install_service)
     dash = sub.add_parser("dashboard", help="open the dashboard (the default with no command)")
-    dash.add_argument("--port", type=int, default=8787)
+    dash.add_argument("--port", type=int, default=DASHBOARD_PORT, help="in this terminal only, not with --background")
     dash.add_argument("--no-open", action="store_true", help="don't open a browser tab")
     dash.add_argument("--background", action="store_true", help="run it as a background service (macOS)")
     dash.add_argument("--restart", action="store_true", help="restart the background dashboard (after an update)")
