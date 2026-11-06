@@ -54,6 +54,14 @@ def completed_bars(df: pd.DataFrame, timeframe: str, now: datetime) -> pd.DataFr
     return df if last + BAR[timeframe] <= now else df.iloc[:-1]
 
 
+def is_network_error(e: BaseException) -> bool:
+    """Timeouts and dropped connections, from requests/urllib3/httpx or the standard library."""
+    if isinstance(e, TimeoutError | ConnectionError):
+        return True
+    names = {c.__name__ for c in type(e).__mro__}
+    return any("Timeout" in n or n in ("ConnectionError", "ProtocolError", "RemoteDisconnected") for n in names)
+
+
 class RestartRequested(Exception):  # a signal to start over, not an error
     """Settings changed on disk; the process should start again with them."""
 
@@ -143,8 +151,12 @@ class Service:
                         self.alerts.send("TaylorTrader stopping", f"{self.errors} errors in a row. Last: {e}\n"
                                          "launchd will restart it; check var/logs.", Level.CRITICAL, key="fatal")
                         raise SystemExit(1) from e
-                    self.alerts.send("TaylorTrader error", f"{type(e).__name__}: {e}", Level.WARNING,
-                                     key=f"err:{type(e).__name__}")
+                    # A single network blip (home Wi-Fi, Alpaca hiccup) fixes itself on the next loop:
+                    # only alert if it happens twice in a row. Anything else alerts at once.
+                    if self.errors >= 2 or not is_network_error(e):
+                        self.alerts.send("TaylorTrader error", f"{type(e).__name__}: {e}"
+                                         + (f" ({self.errors} in a row)" if self.errors >= 2 else ""),
+                                         Level.WARNING, key=f"err:{type(e).__name__}")
                     wait = min(60 * self.errors, 300)
                 self.sleep(wait)
         except RestartRequested as r:

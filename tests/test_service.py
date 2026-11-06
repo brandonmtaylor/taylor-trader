@@ -305,6 +305,33 @@ def test_errors_alert_then_stop_after_five(svc):
     assert svc.journal.db.execute("SELECT COUNT(*) FROM events WHERE kind='error'").fetchone()[0] == 5
 
 
+def test_one_network_blip_is_quiet_two_in_a_row_alert(svc):
+    import requests
+
+    from taylortrader.service import is_network_error
+
+    assert is_network_error(requests.exceptions.ReadTimeout("read timed out"))
+    assert is_network_error(requests.exceptions.ConnectionError("down"))
+    assert not is_network_error(ValueError("bad data"))
+    calls = {"n": 0}
+    real_tick = svc.tick
+
+    def flaky():
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise requests.exceptions.ReadTimeout("read timed out")  # one blip, then fine
+        if calls["n"] in (3, 4):
+            raise requests.exceptions.ReadTimeout("read timed out")  # two in a row
+        if calls["n"] == 5:
+            raise KeyboardInterrupt
+        return real_tick()
+
+    svc.tick = flaky
+    svc.run_forever()
+    errs = [m for t, m, _ in svc.rec.sent if t == "TaylorTrader error"]
+    assert len(errs) == 1 and "(2 in a row)" in errs[0]
+
+
 def test_completed_bars_drops_forming_bar():
     idx = pd.date_range("2026-11-04 14:30", periods=3, freq="5min", tz="UTC")
     df = pd.DataFrame({"close": [1, 2, 3]}, index=idx)

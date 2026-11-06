@@ -150,6 +150,9 @@ def cmd_replay(args) -> int:
     params = {**sc.params, "use_news": False}
     if args.entry_when is not None:
         params["entry_when"] = args.entry_when
+    if args.instructions:
+        text = Path(args.instructions).read_text() if Path(args.instructions).is_file() else args.instructions
+        params["instructions"] = text.strip()
     strat = get_strategy("ai", params)
     symbols = [s.upper() for s in args.symbols] or sc.symbols
     creds = load_alpaca_credentials("paper")  # data only
@@ -387,6 +390,7 @@ def main(argv: list[str] | None = None) -> int:
     rp.add_argument("--days", type=int, default=90)
     rp.add_argument("--max-calls", type=int, default=150)
     rp.add_argument("--entry-when", help="try a different buy rule than the config's (config unchanged)")
+    rp.add_argument("--instructions", help="try different instructions (text, or a file); config unchanged")
     rp.add_argument("--gap", type=int, default=7, help="min bars between questions on one stock")
     rp.add_argument("--workers", type=int, default=2)
     rp.add_argument("--seed", type=int, default=7)
