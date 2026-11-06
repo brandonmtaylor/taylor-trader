@@ -10,7 +10,7 @@ Windows machine. It worked, but it was hacky. It died silently in July 2026 and 
 four months (81 failed runs from July 7 to November 2).
 
 TaylorTrader is the rebuild. It keeps the features that made the original fun, makes trading safer,
-uses AI to help build and operate it, and is open source so others can learn from it or run it.
+uses AI to help build and operate it, and its source is available so others can learn from it or run it.
 
 **Not financial advice.** TaylorTrader is software you run on your own account with your own keys.
 It trades on paper unless you explicitly turn live trading on.
@@ -151,6 +151,9 @@ dashboard, with no strategies, signals or stop-losses involved.
   confirmation. Never: go live, keys, or loosen limits on live. Same validation as the dashboard,
   journaled as from Claude
 - Public repo, README, demo, docs; blog series links to it
-- Before going public: settle the license (AGPL for the core if a hosted service is likely) and the
-  product name (TaylorTrader reads like a person who trades, and clashes with the "Taylor Trading
-  Technique"; check domain, GitHub and a basic trademark search)
+- Before going public: check the product name (domain, GitHub, a basic trademark search)
+
+## Later
+
+If the free version gets real users, a packaged Mac app and a phone app may follow, for people who'd
+rather not use Terminal. The engine, guardrails and dashboard stay free and source-available.

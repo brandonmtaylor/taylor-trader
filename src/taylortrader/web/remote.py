@@ -56,7 +56,7 @@ def is_loopback(client_host: str | None) -> bool:
 
 
 def mac_name() -> str | None:
-    """This Mac's Bonjour name, e.g. "Brandons-Mac-mini" (reachable as Brandons-Mac-mini.local)."""
+    """This Mac's Bonjour name, e.g. "My-Mac-mini" (reachable as My-Mac-mini.local)."""
     try:
         r = subprocess.run(["/usr/sbin/scutil", "--get", "LocalHostName"], capture_output=True, text=True, timeout=5, check=False)
         return r.stdout.strip() or None
