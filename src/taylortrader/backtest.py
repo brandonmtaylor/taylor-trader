@@ -5,6 +5,8 @@
   A gap through the stop fills at the open, not the stop price.
 - Slippage applies to every fill. Whole shares only, like live bracket orders.
 - Always reported next to buy-and-hold over the same bars.
+- Uninvested cash can earn interest (cash_yield_pct a year, e.g. what a money market or T-bills pay),
+  so a strategy that's out of the market isn't scored as if its cash earned nothing.
 """
 
 from __future__ import annotations
@@ -85,6 +87,7 @@ def run(
     take_profit_pct: float = 0.0,
     slippage_bps: float = 5.0,
     start_cash: float = 10_000.0,
+    cash_yield_pct: float = 0.0,
 ) -> Result:
     if not strategy.backtestable:
         raise ValueError(f"{strategy.name} can't be backtested honestly: a language model has already read "
@@ -111,7 +114,14 @@ def run(
         trades.append(Trade(idx[entry_i], entry_px, idx[i], px, shares, entry_reason, reason))
         shares = 0
 
+    # Interest on idle cash, per bar, from the calendar time since the previous bar.
+    gaps = np.r_[0.0, np.asarray((idx[1:] - idx[:-1]).total_seconds(), dtype=float)]  # any time unit
+    years = gaps / (365.25 * 86400)
+    growth = (1 + cash_yield_pct / 100) ** years
+
     for i in range(first, n):
+        if cash_yield_pct and i > first:
+            cash *= growth[i]
         # 1) fill whatever was decided at the previous close, at this bar's open
         if pending:
             action, reason = pending

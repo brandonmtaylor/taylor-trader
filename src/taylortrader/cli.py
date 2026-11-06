@@ -122,7 +122,8 @@ def cmd_backtest(args) -> int:
     for name in names:
         strat = get_strategy(name, _parse_params(args.param) if not args.all else None)
         r = backtest.run(df, strat, allocation_pct=args.allocation, stop_loss_pct=args.stop,
-                         take_profit_pct=args.take_profit, slippage_bps=args.slippage)
+                         take_profit_pct=args.take_profit, slippage_bps=args.slippage,
+                         cash_yield_pct=args.cash_yield)
         rows.append(r.summary())
         if not args.all and args.trades:
             for t in r.trades:
@@ -467,6 +468,7 @@ def main(argv: list[str] | None = None) -> int:
     bt.add_argument("--stop", type=float, default=12.0, help="stop-loss %%")
     bt.add_argument("--take-profit", type=float, default=0.0)
     bt.add_argument("--slippage", type=float, default=5.0, help="basis points per fill")
+    bt.add_argument("--cash-yield", type=float, default=4.0, help="%% a year earned on uninvested cash")
     bt.add_argument("--param", action="append", help="strategy param override, e.g. rsi_buy=30")
     bt.add_argument("--trades", action="store_true", help="list every trade")
     bt.set_defaults(fn=cmd_backtest)

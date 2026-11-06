@@ -54,6 +54,7 @@ RULES = (
     ("close > ma_200 and macd_diff > 0 and prev_macd_diff <= 0", "macd_diff < 0"),  # momentum turn in uptrend
 )
 STOPS = (8.0, 12.0)
+CASH_YIELD = 4.0      # % a year on uninvested cash (roughly T-bills / money market in 2024-26)
 MIN_TRADES = 10       # across all symbols in the search period; fewer is too few to judge
 PASS_PERCENTILE = 90  # the winner must beat this share of random runs on the holdout
 
@@ -83,14 +84,15 @@ def split_at(df: pd.DataFrame, holdout: float) -> int:
     return int(len(df) * (1 - holdout))
 
 
-def _run(df: pd.DataFrame, strat: Strategy, stop: float, start: int, end: int, slippage_bps: float):
+def _run(df: pd.DataFrame, strat: Strategy, stop: float, start: int, end: int, slippage_bps: float,
+         cash_yield: float = CASH_YIELD):
     """Backtest bars [start, end): indicators warm up on the bars just before `start`, but trading
     starts at `start`, so nothing outside the window is traded."""
     lo = max(0, start - strat.warmup)
     part = df.iloc[lo:end]
     if len(part) <= strat.warmup + 2:
         return None
-    return backtest.run(part, strat, stop_loss_pct=stop, slippage_bps=slippage_bps)
+    return backtest.run(part, strat, stop_loss_pct=stop, slippage_bps=slippage_bps, cash_yield_pct=cash_yield)
 
 
 def evaluate(c: Candidate, frames: dict[str, pd.DataFrame], window: str, holdout: float,

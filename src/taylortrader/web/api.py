@@ -59,6 +59,7 @@ STATIC = Path(__file__).parent / "static"
 PROJECT = Path(__file__).resolve().parents[3]
 BENCHMARK = "SPY"
 GO_LIVE_PHRASE = "GO LIVE"
+CASH_YIELD = 4.0  # % a year on uninvested cash in backtests, so time out of the market isn't scored as 0%
 SELL_ALL_PHRASE = "SELL ALL"
 WRITE_HEADER = "x-taylortrader"
 FORBIDDEN = "Changes must come from the TaylorTrader dashboard."
@@ -751,7 +752,7 @@ def create_app(rt: Runtime, cache_ttl: float = 10.0, project: Path = PROJECT) ->
             raise HTTPException(422, f"Not enough {body.timeframe} history for {symbol} ({len(df)} bars).")
         try:
             r = backtest.run(df, strat, allocation_pct=body.allocation_pct, stop_loss_pct=body.stop_loss_pct,
-                             take_profit_pct=body.take_profit_pct)
+                             take_profit_pct=body.take_profit_pct, cash_yield_pct=CASH_YIELD)
         except ValueError as e:
             raise HTTPException(422, str(e)) from None
         closes = df["close"].loc[r.equity.index]

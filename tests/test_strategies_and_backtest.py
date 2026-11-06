@@ -109,3 +109,20 @@ def test_broker_entry_always_has_broker_side_stop():
 def test_broker_refuses_entry_without_stop():
     with pytest.raises(BrokerError):
         _broker().submit_entry(OrderIntent("VRT", Side.BUY, 10, 224.0, None))
+
+
+def test_idle_cash_earns_interest_when_asked():
+    import pandas as pd
+
+    from taylortrader import backtest
+    from taylortrader.strategies import get_strategy
+
+    idx = pd.date_range("2024-01-01", periods=400, freq="D", tz="UTC")
+    c = pd.Series(100.0, index=idx)
+    df = pd.DataFrame({"open": c, "high": c, "low": c, "close": c, "volume": 1e6})
+    never = get_strategy("rule", {"buy_when": "rsi > 1000", "sell_when": ""})  # never buys: all cash
+    flat = backtest.run(df, never)
+    paid = backtest.run(df, never, cash_yield_pct=4.0)
+    assert flat.total_return_pct == 0
+    days = (idx[-1] - idx[never.warmup]).days
+    assert abs(paid.total_return_pct - ((1.04 ** (days / 365.25)) - 1) * 100) < 0.01
