@@ -15,9 +15,13 @@ _KEY_PATTERNS = [
 ]
 
 
+MIN_SECRET_LEN = 6
+
+
 def redact(text: str) -> str:
     for value in loaded_secret_values():
-        if value:
+        # A value this short isn't a real key, and masking it would garble ordinary text and numbers.
+        if value and len(value) >= MIN_SECRET_LEN:
             text = text.replace(value, MASK)
     text = _KEY_PATTERNS[0].sub(MASK, text)
     text = _KEY_PATTERNS[1].sub(lambda m: m.group(1) + m.group(2) + MASK, text)

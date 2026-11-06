@@ -98,3 +98,15 @@ def test_allow_marker_cannot_hide_key_ids_or_known_values():
     assert scan_text(f"x = '{key_id}'  # secretscan: allow")
     known_value = "some-real-looking-value-123456"
     assert scan_text(f"note: {known_value}  # secretscan: allow", known={known_value})
+
+
+def test_the_live_flag_isnt_treated_as_a_secret(fake_env, monkeypatch):
+    # The go-live flag is "1". Registering it would mask every 1 in every alert ("$1,234" -> "$***,234").
+    monkeypatch.setenv(secrets.LIVE_CONFIRM_VAR, "1")
+    assert secrets.live_trading_confirmed()
+    assert redact("bought $1,234.51 of VTI") == "bought $1,234.51 of VTI"
+    secrets._LOADED_SECRETS.add("12")  # and a short value from anywhere else is never masked either
+    try:
+        assert redact("12 shares") == "12 shares"
+    finally:
+        secrets._LOADED_SECRETS.discard("12")

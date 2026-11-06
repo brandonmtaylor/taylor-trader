@@ -76,8 +76,9 @@ def _read_keychain(name: str, service: str = KEYCHAIN_SERVICE) -> str | None:
     return value if result.returncode == 0 and value else None
 
 
-def get_secret(name: str, dotenv_path: Path | None = None) -> SecretStr | None:
-    """Look up one secret: environment, then .env, then Keychain (service "taylortrader")."""
+def get_secret(name: str, dotenv_path: Path | None = None, *, redact: bool = True) -> SecretStr | None:
+    """Look up one secret: environment, then .env, then Keychain (service "taylortrader").
+    `redact=False` for flags that aren't secret (masking "1" would garble every number)."""
     value = os.environ.get(name) or None
     if value is None:
         value = _read_dotenv(dotenv_path or Path(".env")).get(name)
@@ -85,14 +86,15 @@ def get_secret(name: str, dotenv_path: Path | None = None) -> SecretStr | None:
         value = _read_keychain(name)
     if value is None:
         return None
-    _LOADED_SECRETS.add(value)
+    if redact:
+        _LOADED_SECRETS.add(value)
     return SecretStr(value)
 
 
 def live_trading_confirmed(dotenv_path: Path | None = None) -> bool:
     """Live needs this flag in the environment, .env or Keychain. The dashboard sets it only
     after the typed go-live confirmation, and removes it when you switch back to paper."""
-    return get_secret(LIVE_CONFIRM_VAR, dotenv_path) is not None
+    return get_secret(LIVE_CONFIRM_VAR, dotenv_path, redact=False) is not None
 
 
 def load_alpaca_credentials(mode: str, dotenv_path: Path | None = None) -> AlpacaCredentials:
@@ -161,7 +163,8 @@ def set_secret(name: str, value: str, dotenv_path: Path | None = None) -> str:
     else:
         _write_dotenv(dotenv_path or Path(".env"), name, value)
         where = ".env"
-    _LOADED_SECRETS.add(value)
+    if name != LIVE_CONFIRM_VAR:
+        _LOADED_SECRETS.add(value)
     return where
 
 
