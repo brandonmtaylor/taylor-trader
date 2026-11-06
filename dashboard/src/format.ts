@@ -1,3 +1,5 @@
+import type { InvestEvery } from "./api";
+
 const usd = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
 const usd0 = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
 
@@ -21,6 +23,15 @@ export function ago(seconds: number): string {
   if (seconds < 86400) return `${Math.floor(seconds / 3600)} h ${Math.floor((seconds % 3600) / 60)} min ago`;
   return `${Math.floor(seconds / 86400)} days ago`;
 }
+
+/** "$100 a week". (The what-if table says "every week": different sentence, different word.) */
+export const EVERY_WORD: Record<InvestEvery, string> = { week: "a week", "2weeks": "every 2 weeks", month: "a month", once: "once" };
+
+/** Order and buy statuses, as the suffix of a `tag--` class. */
+export const STATUS_TAG: Record<string, string> = {
+  filled: "good", submitted: "info", "dry-run": "info", preview: "info", planned: "info",
+  blocked: "warn", failed: "crit", canceled: "warn", expired: "warn", rejected: "crit",
+};
 
 const NY = "America/New_York";
 

@@ -1,4 +1,4 @@
-import { useId, useState, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { send, type SecretName, type Setup } from "../api";
 
 /** Label + control wired together. `render` receives the id to put on the input. */
@@ -54,6 +54,20 @@ export function Toggle({ checked, onChange, label, id }: { checked: boolean; onC
       <span>{label}</span>
     </label>
   );
+}
+
+/** A ref for a <dialog> that shows and hides with `open`. `onOpen` runs each time it opens. */
+export function useDialog(open: boolean, onOpen: () => void) {
+  const ref = useRef<HTMLDialogElement>(null);
+  useEffect(() => {
+    const d = ref.current;
+    if (!d) return;
+    if (open && !d.open) d.showModal();
+    if (!open && d.open) d.close();
+    if (open) onOpen();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
+  return ref;
 }
 
 export type Notice = { kind: "good" | "crit" | "info"; text: string } | null;

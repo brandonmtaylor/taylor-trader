@@ -1,8 +1,8 @@
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import { send, type Contribution, type Holding, type InvestEvery, type InvestPlan, type InvestResp, type InvestStatus } from "../api";
-import { Labeled, NoticeLine, NumberInput, Toggle, useAction } from "../components/forms";
+import { Labeled, NoticeLine, NumberInput, Toggle, useAction, useDialog } from "../components/forms";
 import { WhatIf } from "../components/WhatIf";
-import { money, pct } from "../format";
+import { EVERY_WORD, money, pct, STATUS_TAG } from "../format";
 import { clone, same } from "../settings";
 import { usePoll } from "../usePoll";
 
@@ -13,7 +13,6 @@ const EVERY: { id: InvestEvery; label: string }[] = [
   { id: "once", label: "All at once" },
 ];
 const WEEKDAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"];
-const EVERY_WORD: Record<InvestEvery, string> = { week: "a week", "2weeks": "every 2 weeks", month: "a month", once: "once" };
 
 const dateText = (iso: string) =>
   new Date(`${iso}T12:00:00`).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
@@ -322,11 +321,6 @@ function PlanEditor({ draft, resp, onChange }: { draft: InvestPlan; resp: Invest
 
 // --- history -----------------------------------------------------------------------------------------
 
-const STATUS_TAG: Record<string, string> = {
-  filled: "tag--good", submitted: "tag--info", preview: "tag--info", planned: "tag--info",
-  blocked: "tag--warn", failed: "tag--crit", canceled: "tag--warn", rejected: "tag--crit", expired: "tag--warn",
-};
-
 function History({ rows }: { rows: Contribution[] }) {
   return (
     <section className="panel" aria-labelledby="inv-hist">
@@ -344,7 +338,7 @@ function History({ rows }: { rows: Contribution[] }) {
                 <td className="num">{money(c.total)}</td>
                 <td className="holdings__split">
                   {c.buys.map((b) => (
-                    <span key={b.symbol} className={`tag ${STATUS_TAG[b.status] ?? ""}`} title={b.detail || b.status}>
+                    <span key={b.symbol} className={`tag tag--${STATUS_TAG[b.status] ?? "info"}`} title={b.detail || b.status}>
                       {b.symbol} {money(b.notional)}{b.status !== "filled" && b.status !== "preview" ? ` · ${b.status}` : ""}
                     </span>
                   ))}
@@ -364,17 +358,10 @@ function ConfirmDialog({ open, phrase, plan, live, busy, notice, onCancel, onCon
   open: boolean; phrase: string; plan: InvestPlan; live: boolean; busy: boolean;
   notice: ReturnType<typeof useAction>["notice"]; onCancel: () => void; onConfirm: (typed: string) => void;
 }) {
-  const ref = useRef<HTMLDialogElement>(null);
   const [typed, setTyped] = useState("");
+  const ref = useDialog(open, () => setTyped(""));
   const titleId = useId();
   const inputId = useId();
-  useEffect(() => {
-    const d = ref.current;
-    if (!d) return;
-    if (open && !d.open) d.showModal();
-    if (!open && d.open) d.close();
-    if (open) setTyped("");
-  }, [open]);
   const when = plan.every === "once" ? "once, on the next open day"
     : plan.every === "month" ? `on day ${plan.day} of every month`
       : `every ${plan.every === "2weeks" ? "other " : ""}${WEEKDAYS[plan.day]}`;

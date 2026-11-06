@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { ChartPeriod, TradeChartData } from "../api";
 import { money, pct, qty } from "../format";
+import { useChartWidth } from "../useChartWidth";
 import { niceTicks } from "./EquityChart";
 
 const PERIODS: { id: ChartPeriod; label: string }[] = [
@@ -56,8 +57,7 @@ export function TradeChart({
   data: TradeChartData | null; error: string | null; symbol: string; period: ChartPeriod;
   onSymbol: (s: string) => void; onPeriod: (p: ChartPeriod) => void;
 }) {
-  const wrap = useRef<HTMLDivElement>(null);
-  const [w, setW] = useState(640);
+  const { wrap, w } = useChartWidth();
   const [hover, setHover] = useState<number | null>(null);
   const [lines, setLines] = useState<Set<LineKey>>(loadLines);
   const toggle = (k: LineKey) => {
@@ -72,12 +72,6 @@ export function TradeChart({
     }
   };
 
-  useEffect(() => {
-    if (!wrap.current) return;
-    const ro = new ResizeObserver(([e]) => setW(Math.max(280, e.contentRect.width)));
-    ro.observe(wrap.current);
-    return () => ro.disconnect();
-  }, []);
   useEffect(() => setHover(null), [symbol, period]);
 
   const pts = data?.points ?? [];

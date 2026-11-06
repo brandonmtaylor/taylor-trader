@@ -1,7 +1,5 @@
 import type { InvestResp } from "../api";
-import { money } from "../format";
-
-const EVERY_WORD = { week: "a week", "2weeks": "every 2 weeks", month: "a month", once: "once" } as const;
+import { EVERY_WORD, money } from "../format";
 
 /** The invest plan at a glance, on the Overview. The Invest page has the rest. */
 export function InvestCard({ data, error }: { data: InvestResp | null; error: string | null }) {

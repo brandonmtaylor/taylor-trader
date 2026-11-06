@@ -1,5 +1,5 @@
 import type { Account, AIDecision, EventRow, History, OrderRow, Performance, PositionRow, Results, Status } from "../api";
-import { money, money0, pct, qty, shortTime } from "../format";
+import { money, money0, pct, qty, shortTime, STATUS_TAG } from "../format";
 
 const PERIOD_WORDS: Record<Performance["period"], string> = { "1M": "past month", "3M": "past 3 months", "1A": "past year" };
 
@@ -256,11 +256,6 @@ export function Positions({ account, error, onSell, notice, marketOpen }: {
     </section>
   );
 }
-
-const STATUS_TAG: Record<string, string> = {
-  filled: "good", submitted: "info", "dry-run": "info", blocked: "warn", failed: "crit",
-  canceled: "warn", expired: "warn", rejected: "crit",
-};
 
 export function Orders({ orders, error }: { orders: OrderRow[] | null; error: string | null }) {
   return (

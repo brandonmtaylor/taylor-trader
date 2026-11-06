@@ -1,7 +1,7 @@
-import { useEffect, useId, useRef, useState } from "react";
+import { useId, useState } from "react";
 import { send, type Setup, type Status } from "../api";
 import { AlpacaKeys } from "./Keys";
-import { NoticeLine, useAction } from "./forms";
+import { NoticeLine, useAction, useDialog } from "./forms";
 
 const PHRASE = "GO LIVE";
 
@@ -9,18 +9,11 @@ const PHRASE = "GO LIVE";
 export function GoLiveDialog({ open, onClose, setup, onSetup, onDone }: {
   open: boolean; onClose: () => void; setup: Setup; onSetup: (s: Setup) => void; onDone: (s: Status) => void;
 }) {
-  const ref = useRef<HTMLDialogElement>(null);
   const [typed, setTyped] = useState("");
+  const ref = useDialog(open, () => setTyped(""));
   const act = useAction();
   const titleId = useId();
   const phraseId = useId();
-  useEffect(() => {
-    const d = ref.current;
-    if (!d) return;
-    if (open && !d.open) d.showModal();
-    if (!open && d.open) d.close();
-    if (open) setTyped("");
-  }, [open]);
   const hasKeys = Boolean(setup.secrets.ALPACA_LIVE_KEY_ID && setup.secrets.ALPACA_LIVE_SECRET_KEY);
   const go = () => act.run(async () => {
     const s = await send<Status>("POST", "/api/mode", { mode: "live", confirm: typed });

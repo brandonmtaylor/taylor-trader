@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useState } from "react";
 import type { Performance } from "../api";
 import { day, money, pct } from "../format";
+import { useChartWidth } from "../useChartWidth";
 
 type Period = Performance["period"];
 const PERIODS: { id: Period; label: string }[] = [
@@ -24,16 +25,8 @@ export function niceTicks(lo: number, hi: number, count = 4): number[] {
 export function EquityChart({
   perf, period, onPeriod, error,
 }: { perf: Performance | null; period: Period; onPeriod: (p: Period) => void; error: string | null }) {
-  const wrap = useRef<HTMLDivElement>(null);
-  const [w, setW] = useState(640);
+  const { wrap, w } = useChartWidth();
   const [hover, setHover] = useState<number | null>(null);
-
-  useEffect(() => {
-    if (!wrap.current) return;
-    const ro = new ResizeObserver(([e]) => setW(Math.max(280, e.contentRect.width)));
-    ro.observe(wrap.current);
-    return () => ro.disconnect();
-  }, []);
 
   const rows = useMemo(() => {
     if (!perf || perf.equity.length < 2) return [];
