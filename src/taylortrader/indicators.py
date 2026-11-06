@@ -6,6 +6,9 @@ Input is a DataFrame with open/high/low/close/volume columns.
 
 from __future__ import annotations
 
+import re
+from collections.abc import Callable
+
 import numpy as np
 import pandas as pd
 
@@ -38,6 +41,42 @@ def chaikin(df: pd.DataFrame, days: int = 20) -> pd.Series:
     mult = ((df["close"] - df["low"]) - (df["high"] - df["close"])) / rng
     mfv = mult * df["volume"]
     return mfv.rolling(days).mean() / df["volume"].rolling(days).mean()
+
+
+def atr(df: pd.DataFrame, days: int = 14) -> pd.Series:
+    """Average true range in dollars, Wilder-smoothed like rsi(): how far the stock usually moves."""
+    prev = df["close"].shift()
+    true_range = pd.concat([df["high"] - df["low"], (df["high"] - prev).abs(), (df["low"] - prev).abs()], axis=1).max(axis=1)
+    return true_range.ewm(com=days - 1, min_periods=days).mean()
+
+
+# Indicators a rule can ask for at any length: ma_50, high_20. Lengths count bars. The longest is
+# what the live service always has on hand (see LOOKBACK in service.py): a year of daily bars.
+MAX_PERIOD = 250
+PERIODIC: dict[str, Callable[[pd.DataFrame, int], pd.Series]] = {
+    "ma": lambda df, n: sma(df["close"], n),
+    "ema": lambda df, n: df["close"].ewm(span=n, adjust=False, min_periods=n).mean(),
+    "high": lambda df, n: df["high"].rolling(n).max(),
+    "low": lambda df, n: df["low"].rolling(n).min(),
+    "change": lambda df, n: (df["close"] / df["close"].shift(n) - 1) * 100,
+    "avg_volume": lambda df, n: df["volume"].rolling(n).mean(),
+    "rsi": lambda df, n: rsi(df["close"], n),
+    "atr": atr,
+}
+_PERIODIC = re.compile(f"({'|'.join(PERIODIC)})_([1-9][0-9]*)")
+
+
+def period(name: str) -> int | None:
+    """The length in a name like ma_50; None if it isn't one."""
+    m = _PERIODIC.fullmatch(name)
+    return int(m[2]) if m else None
+
+
+def periodic(df: pd.DataFrame, name: str) -> pd.Series:
+    m = _PERIODIC.fullmatch(name)
+    if not m:
+        raise KeyError(name)
+    return PERIODIC[m[1]](df, int(m[2]))
 
 
 def add_all(df: pd.DataFrame) -> pd.DataFrame:

@@ -147,9 +147,8 @@ class AIStrategy(Strategy):
             raise RuntimeError("the AI strategy isn't connected to the service")
         symbol = getattr(b, "symbol", None) or "?"
         now_row = b.df.iloc[i].to_dict()
-        prev_row = b.df.iloc[i - 1].to_dict() if i > 0 else {}
         rule = self._entry_rule if question == "entry" else self._exit_rule
-        if not criteria.evaluate(rule, now_row, prev_row):
+        if not criteria.evaluate(rule, *criteria.rows(b, i, rule)):
             return NO  # the cheap filter said no: no model call, nothing to log
 
         if ctx.llm is None:

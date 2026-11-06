@@ -3,7 +3,7 @@ import { Labeled, NumberInput, Toggle } from "./forms";
 
 // Hourly is 6, not 7: the bar stamped 9:00 starts before the open and is dropped (see grading.horizon_bars).
 const BARS_PER_DAY: Record<string, number> = { "1Min": 390, "5Min": 78, "15Min": 26, "1Hour": 6, "1Day": 1 };
-const NAMES = "close, open, high, low, volume, rsi, ma_20, ma_200, macd, macd_signal, macd_diff, chaikin";
+const NAMES = "close, open, high, low, volume, macd, macd_signal, macd_diff, chaikin, and at any length up to 250 bars: ma_50, ema_20, high_20, low_20, change_5 (percent), avg_volume_20, rsi_14, atr_14";
 
 /** The AI strategy's settings: plain-English instructions plus optional rules that gate each model call. */
 export function AIFields({ value, onChange, dailyLimit, defaults }: {

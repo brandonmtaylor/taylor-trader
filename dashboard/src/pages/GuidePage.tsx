@@ -76,6 +76,10 @@ const SECTIONS: { id: string; title: string; body: ReactNode }[] = [
         <p><b>The honest result so far:</b> on the 30 Dow stocks and 9 sector funds over several years, none of the built-in
           strategies beat simply buying and holding, though some had smaller drops along the way. They're here
           to experiment with, change, and build on. If a strategy looks great, it was probably tuned to the past.</p>
+        <p><b>Write your own</b> with the <code>rule</code> strategy: a buy rule and a sell rule, like{" "}
+          <code>close &gt; ma_50 and rsi &lt; 40</code> or <code>close &gt; prev_high_20</code>. Lengths count bars, so
+          ma_50 is a 50-day average on a daily strategy and 50 hours on an hourly one. If you connect Claude, you
+          can describe the idea in your own words and it writes the rules.</p>
         <p>To test an idea properly from Terminal, <code>taylortrader search</code> keeps back the most recent
           data the search never sees, and checks the winner against random entries to rule out luck.</p>
       </>

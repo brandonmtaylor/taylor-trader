@@ -1,7 +1,7 @@
 """A strategy written as two rules, no code: buy when one holds, sell when the other does.
 
 Rules use the same small language as the AI strategy's filters (criteria.py):
-`rsi < 50 and macd_diff > 0`, `prev_rsi < 30 and rsi >= 30`, `close > ma_200`.
+`rsi < 50 and macd_diff > 0`, `prev_rsi < 30 and rsi >= 30`, `close > ma_50`, `close > prev_high_20`.
 """
 
 from __future__ import annotations
@@ -33,28 +33,17 @@ class RuleStrategy(Strategy):
             raise ValueError(f"rule: {e}") from None
         if self._buy is None:
             raise ValueError("rule: buy_when can't be empty (it would buy on every bar)")
-        self._uses_200 = "ma_200" in f"{self.p.buy_when} {self.p.sell_when}"
 
     @property
     def warmup(self) -> int:
-        return 200 if self._uses_200 else 35
-
-    @staticmethod
-    def _row(b: Bars, i: int) -> dict[str, float]:
-        out = {}
-        for c in criteria.COLUMNS:
-            try:
-                out[c] = float(getattr(b, c)[i])
-            except AttributeError:
-                continue
-        return out
+        return max(35, criteria.longest(self._buy), criteria.longest(self._sell))
 
     def entry(self, b: Bars, i: int) -> Signal:
-        if i < 1 or not criteria.evaluate(self._buy, self._row(b, i), self._row(b, i - 1)):
+        if i < 1 or not criteria.evaluate(self._buy, *criteria.rows(b, i, self._buy)):
             return NO
         return Signal(True, f"rule: {self.p.buy_when}")
 
     def exit(self, b: Bars, i: int, entry_price: float) -> Signal:
-        if self._sell is None or i < 1 or not criteria.evaluate(self._sell, self._row(b, i), self._row(b, i - 1)):
+        if self._sell is None or i < 1 or not criteria.evaluate(self._sell, *criteria.rows(b, i, self._sell)):
             return NO
         return Signal(True, f"rule: {self.p.sell_when}")

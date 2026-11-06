@@ -9,7 +9,7 @@ const TF_LABEL: Record<string, string> = {
   "1Min": "1 minute", "5Min": "5 minutes", "15Min": "15 minutes", "1Hour": "1 hour", "1Day": "1 day",
 };
 
-const RULE_NAMES = "close, open, high, low, volume, ma_20, ma_200, rsi, macd, macd_signal, macd_diff, chaikin";
+const RULE_NAMES = "close, open, high, low, volume, macd, macd_signal, macd_diff, chaikin, and at any length up to 250 bars: ma_50, ema_20, high_20, low_20, change_5 (percent), avg_volume_20, rsi_14, atr_14";
 
 /** "rsi_buy" -> "RSI buy", "legacy_crossover" -> "Legacy crossover" */
 function paramLabel(k: string): string {

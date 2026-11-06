@@ -100,13 +100,13 @@ def questions(frames: dict[str, pd.DataFrame], strategy: AIStrategy, *, bar: tim
     for n, (symbol, real) in enumerate(sorted(frames.items())):
         alias = _alias(n)
         fake = disguise(real, rng)
-        rows = fake.to_dict("records")
+        bars = Bars(fake, alias)
         last = len(fake) - 1 - grading.horizon_bars(bar)
         next_ok = WARMUP
         for i in range(WARMUP, last + 1):
             if i < next_ok:
                 continue
-            if criteria.evaluate(rule, rows[i], rows[i - 1]):
+            if criteria.evaluate(rule, *criteria.rows(bars, i, rule)):
                 picked.append((symbol, alias, fake, i))
                 next_ok = i + gap
     qualified = len(picked)

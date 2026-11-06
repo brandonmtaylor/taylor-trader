@@ -2,8 +2,9 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from taylortrader import backtest, search
+from taylortrader import backtest, criteria, indicators, search
 from taylortrader.strategies import get_strategy
+from taylortrader.strategies.base import Bars
 
 
 def walk(n=1500, seed=0, drift=0.0002):
@@ -137,3 +138,59 @@ def test_universes_are_fixed_lists():
     assert len(search.UNIVERSES["dow2020"]) == len(set(search.UNIVERSES["dow2020"])) == 30
     assert "BA" in search.UNIVERSES["dow2020"] and "NVDA" not in search.UNIVERSES["dow2020"]  # NVDA joined in 2024
     assert len(search.UNIVERSES["sectors"]) == 9
+
+
+def _bars(n=320):
+    rng = np.random.default_rng(3)
+    close = 100 + rng.normal(0, 1, n).cumsum()
+    idx = pd.date_range("2024-01-01", periods=n, freq="D", tz="UTC")
+    return pd.DataFrame({"open": close, "high": close + 1, "low": close - 1, "close": close,
+                         "volume": rng.integers(1000, 5000, n).astype(float)}, index=idx)
+
+
+@pytest.mark.parametrize("name", ["ma_50", "ema_20", "high_20", "low_20", "change_5", "avg_volume_20", "rsi_7", "atr_14"])
+def test_any_length_indicators_never_see_the_future(name):
+    df = _bars()
+    full = Bars(df).__getattr__(name)
+    early = Bars(df.iloc[:200]).__getattr__(name)
+    assert not np.isnan(full[199])
+    assert full[199] == pytest.approx(early[199])
+
+
+def test_any_length_indicators_have_the_right_values():
+    df = _bars()
+    b, i = Bars(df), 100
+    assert b.ma_50[i] == pytest.approx(df["close"].iloc[i - 49:i + 1].mean())
+    assert b.high_20[i] == df["high"].iloc[i - 19:i + 1].max()
+    assert b.low_20[i] == df["low"].iloc[i - 19:i + 1].min()
+    assert b.change_5[i] == pytest.approx((df["close"].iloc[i] / df["close"].iloc[i - 5] - 1) * 100)
+    assert b.avg_volume_20[i] == pytest.approx(df["volume"].iloc[i - 19:i + 1].mean())
+    assert Bars(indicators.add_all(df)).rsi[i] == pytest.approx(b.rsi_14[i])
+
+
+def test_a_rule_waits_for_its_longest_indicator():
+    assert get_strategy("rule", {"buy_when": "close > ma_50", "sell_when": ""}).warmup == 50
+    assert get_strategy("rule", {"buy_when": "close > ma_20", "sell_when": "low < low_120"}).warmup == 120
+    assert get_strategy("rule", {"buy_when": "rsi < 30", "sell_when": ""}).warmup == 35
+
+
+def test_a_breakout_rule_buys_above_the_previous_high():
+    df = _bars()
+    df.loc[df.index[250], ["close", "high"]] = 500.0
+    s = get_strategy("rule", {"buy_when": "close > prev_high_20", "sell_when": ""})
+    b = Bars(indicators.add_all(df))
+    assert s.entry(b, 250)
+    assert not s.entry(b, 251)  # the spike is now part of the recent high
+
+
+@pytest.mark.parametrize("bad", ["ma_0 > 1", "ma_251 > 1", "ma_050 > 1", "prev_prev_ma_50 > 1", "ma_ > 1", "volatility_20 > 1"])
+def test_rules_refuse_lengths_and_names_they_cant_compute(bad):
+    with pytest.raises(criteria.CriteriaError):
+        criteria.parse(bad)
+
+
+def test_ai_filter_rules_can_use_any_length():
+    tree = criteria.parse("close > ma_50 * 0 and prev_atr_14 > 0")
+    b = Bars(indicators.add_all(_bars()))
+    assert criteria.evaluate(tree, *criteria.rows(b, 100, tree))
+    assert not criteria.evaluate(tree, *criteria.rows(b, 10, tree))  # not enough bars yet: no, not an error

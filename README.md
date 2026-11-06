@@ -106,6 +106,12 @@ Built-ins are ported from the original bot: `macd_rsi`, `macd`, `ma_20`, `rsi_14
 `ma_200_rsi`, `ma_20_over_200_rsi`, `chaikin`, `pullback`. Run as many as you like; each symbol
 belongs to one strategy so it's always clear who manages a position.
 
+Or write your own with `rule`, no code: a buy rule and a sell rule, like `close > ma_50 and rsi < 40`
+or `close > prev_high_20`. Rules can use price, volume, MACD and Chaikin, plus these at any length up
+to 250 bars: `ma_N`, `ema_N`, `high_N`, `low_N`, `change_N` (percent), `avg_volume_N`, `rsi_N`, `atr_N`.
+Lengths count bars, so `ma_50` is 50 days on a daily strategy and 50 hours on an hourly one. With the
+[MCP server](#talk-to-it-from-claude-mcp) connected, you can describe an idea and Claude writes the rules.
+
 ## AI strategy (experimental)
 `ai` asks a language model whether to buy, sell or hold. It works with:
 

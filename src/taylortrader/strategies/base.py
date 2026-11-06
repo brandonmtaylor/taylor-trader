@@ -7,6 +7,8 @@ from typing import Any, ClassVar
 import numpy as np
 import pandas as pd
 
+from taylortrader import indicators
+
 
 @dataclass(frozen=True)
 class Signal:
@@ -35,9 +37,13 @@ class Bars:
         if name.startswith("_") or name in ("df", "symbol"):
             raise AttributeError(name)
         if name not in self._cols:
-            if name not in self.df.columns:
+            if name in self.df.columns:
+                col = self.df[name]
+            elif indicators.period(name) is not None:  # any length a rule asks for: ma_50, high_20
+                col = indicators.periodic(self.df, name)
+            else:
                 raise AttributeError(f"no column {name!r}; did you run indicators.add_all()?")
-            self._cols[name] = self.df[name].to_numpy(dtype=float)
+            self._cols[name] = col.to_numpy(dtype=float)
         return self._cols[name]
 
 

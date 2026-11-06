@@ -20,7 +20,7 @@ from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ToolAnnotations
 
-from taylortrader import criteria
+from taylortrader import criteria, indicators
 
 INSTRUCTIONS = """TaylorTrader is a trading bot running on the user's own Mac against their own Alpaca \
 account (usually paper money; check get_status for the mode). Use these tools to report on it and, \
@@ -48,9 +48,19 @@ in the dashboard (Invest page).
 READ = ToolAnnotations(read_only_hint=True, open_world_hint=False)
 CHANGE = ToolAnnotations(read_only_hint=False, destructive_hint=False, open_world_hint=False)
 SELL = ToolAnnotations(read_only_hint=False, destructive_hint=True, open_world_hint=True)
-RULE_LANGUAGE = {"names": list(criteria.COLUMNS), "previous_bar": "prefix a name with prev_, e.g. prev_rsi",
-                 "allowed": "names, numbers, + - * /, comparisons, and/or/not",
-                 "examples": ["prev_rsi < 30 and rsi >= 30", "close > ma_200 and macd_diff > 0"]}
+RULE_LANGUAGE = {
+    "names": list(criteria.COLUMNS),
+    "any_length": {"ma_N": "simple average of the close", "ema_N": "exponential average of the close",
+                   "high_N": "highest high, including this bar", "low_N": "lowest low, including this bar",
+                   "change_N": "percent change in the close over N bars", "avg_volume_N": "average volume",
+                   "rsi_N": "RSI", "atr_N": "average true range, in dollars"},
+    "lengths": f"N is 1 to {indicators.MAX_PERIOD} and counts bars of the strategy's timeframe, so '50-day "
+               "average' means ma_50 on a 1Day strategy. For a year, use 250 on 1Day.",
+    "previous_bar": "prefix a name with prev_, e.g. prev_rsi",
+    "allowed": "names, numbers, + - * /, comparisons, and/or/not",
+    "examples": ["prev_rsi < 30 and rsi >= 30", "close > ma_50 and ma_50 > ma_200", "close > prev_high_20",
+                 "close < high_60 * 0.9", "change_5 < -3", "volume > avg_volume_20 * 2"],
+}
 KEEP_OPEN = "KEEP OPEN"
 STRATEGY_FIELDS = ("name", "symbols", "timeframe", "allocation_pct", "stop_loss_pct", "take_profit_pct",
                    "enabled", "params")
