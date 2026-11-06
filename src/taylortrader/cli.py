@@ -228,6 +228,73 @@ def _print_replay(rep: dict) -> None:
         print(f"  Only {rep['graded']} graded: differences of a few points are noise.")
 
 
+def cmd_search(args) -> int:
+    """Try a fixed list of strategies on older data; test the winner once on newer data it never saw."""
+    from taylortrader import search
+    from taylortrader.data import MarketData
+
+    cfg = load_config(args.config)
+    symbols = [s.upper() for s in args.symbols] or sorted({s for sc in cfg.strategies for s in sc.symbols})
+    creds = load_alpaca_credentials("paper")  # data only
+    md = MarketData(creds, cfg.data_dir / "cache", feed=args.feed or ("sip" if cfg.feed == "yahoo" else cfg.feed))
+    start = datetime.now(UTC) - timedelta(days=args.days)
+    frames = {}
+    for sym in symbols:
+        df = md.bars(sym, args.timeframe, start)
+        if len(df) < 400:
+            print(f"  skipping {sym}: only {len(df)} bars")
+            continue
+        frames[sym] = df
+    if not frames:
+        print("error: no symbol had enough history", file=sys.stderr)
+        return 2
+    stops = tuple(float(x) for x in args.stops.split(","))
+    grid = search.default_grid(stops)
+    print(f"{', '.join(frames)} {args.timeframe}, last {args.days} days. Trying {len(grid)} candidates on the "
+          f"older {100 - args.holdout:g}%, then the winner once on the newest {args.holdout:g}%.")
+
+    def progress(k, n, label):
+        print(f"\r  {k}/{n} {label[:70]:<70}", end="", flush=True)
+
+    rep = search.run_search(frames, grid, holdout=args.holdout / 100, seeds=args.seeds,
+                            log_path=cfg.data_dir / "search" / "holdout-looks.jsonl", on_progress=progress)
+    print()
+    out = cfg.data_dir / "search" / f"search-{datetime.now(UTC):%Y%m%d-%H%M}.json"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(json.dumps(rep, default=str, indent=1))
+    _print_search(rep, args.top)
+    print(f"\nFull report (every candidate, every symbol): {out}")
+    return 0
+
+
+def _print_search(rep: dict, top: int) -> None:
+    def p(v):
+        return "     —" if v is None else f"{v:+6.1f}"
+
+    sp, hp = rep["periods"]["search"], rep["periods"]["holdout"]
+    print(f"\nSearch period {sp[0]} to {sp[1]}  (vs. buy-and-hold, average across symbols; points)")
+    print(f"  {'':3}{'excess':>7} {'return':>7} {'b&h':>7} {'trades':>6}  candidate")
+    for k, r in enumerate(rep["results"][:top]):
+        thin = " (too few trades)" if r["trades"] < rep["min_trades"] else ""
+        print(f"  {k + 1:>2}.{p(r['excess'])}  {p(r['return'])}  {p(r['buy_hold'])}  {r['trades']:>6}  {r['label']}{thin}")
+    if len(rep["results"]) > top:
+        print(f"  ... {len(rep['results']) - top} more in the report.")
+    print(f"\nTried {rep['tried']}; {rep['eligible']} made at least {rep['min_trades']} trades. The best of "
+          f"{rep['tried']} looks better than it is: that's what the holdout is for.")
+    w, h, luck = rep["winner"], rep["holdout"], rep["luck"]
+    if w and h:
+        print(f"\nHoldout {hp[0]} to {hp[1]}: {w['label']}")
+        print(f"  return {h['return']:+.1f}% vs. buy-and-hold {h['buy_hold']:+.1f}%  ->  {h['excess']:+.1f} pts, "
+              f"{h['trades']} trades, worst drop {h['max_dd']:.1f}%")
+        if luck and luck["runs"]:
+            print(f"  Random entries ({luck['runs']} runs, same frequency, holding time and stop): median "
+                  f"{luck['median']:+.1f} pts, top 10% above {luck['p90']:+.1f}. The winner beat {luck['beat_pct']:.0f}%.")
+    if rep["previous_looks"]:
+        print(f"\n  Note: this holdout has been looked at {rep['previous_looks']} time(s) before. Each look makes "
+              "it less trustworthy; wait for new data rather than re-searching.")
+    print(f"\n{rep['verdict']}")
+
+
 def cmd_run(args) -> int:
     import os
 
@@ -385,6 +452,16 @@ def main(argv: list[str] | None = None) -> int:
     bt.add_argument("--param", action="append", help="strategy param override, e.g. rsi_buy=30")
     bt.add_argument("--trades", action="store_true", help="list every trade")
     bt.set_defaults(fn=cmd_backtest)
+    se = sub.add_parser("search", help="try a fixed list of strategies; test the winner on data it never saw")
+    se.add_argument("symbols", nargs="*", help="default: every symbol in your strategies")
+    se.add_argument("--timeframe", default="1Hour")
+    se.add_argument("--days", type=int, default=730)
+    se.add_argument("--holdout", type=float, default=30.0, help="%% of the newest data kept for the final test")
+    se.add_argument("--stops", default="8,12", help="stop-loss %%s to try, comma-separated")
+    se.add_argument("--seeds", type=int, default=100, help="random-entry runs for the luck test")
+    se.add_argument("--feed", choices=["iex", "sip"])
+    se.add_argument("--top", type=int, default=12, help="rows to print")
+    se.set_defaults(fn=cmd_search)
     rp = sub.add_parser("replay", help="ask the AI about past bars (disguised) and grade it")
     rp.add_argument("symbols", nargs="*", help="default: the AI strategy's symbols")
     rp.add_argument("--days", type=int, default=90)
