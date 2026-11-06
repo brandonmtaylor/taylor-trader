@@ -3,7 +3,11 @@ import plistlib
 from taylortrader import launchd
 
 
-def test_agents_hold_paths_not_secrets_and_the_dashboard_is_its_own(tmp_path):
+def test_agents_hold_paths_not_secrets_and_the_dashboard_is_its_own(tmp_path, monkeypatch):
+    from taylortrader import home
+
+    # Nothing installed: no checkout environment and no `taylortrader` on PATH (CI's `uv run` adds one).
+    monkeypatch.setattr(home.shutil, "which", lambda n: None if n == "taylortrader" else f"/usr/bin/{n}")
     project = tmp_path / "proj"
     paths = launchd.write_plists(project, dest=tmp_path / "agents")
     labels = {p.stem for p in paths}
