@@ -1,6 +1,6 @@
 # TaylorTrader
 
-An open-source trading bot and long-term investing autopilot for [Alpaca](https://alpaca.markets),
+A trading bot and long-term investing autopilot for [Alpaca](https://alpaca.markets),
 built safety-first. It runs on your Mac, with a local dashboard, phone alerts, and a built-in guide.
 
 > **Not financial advice.** TaylorTrader is software you run on your own account, with your own keys.
@@ -186,4 +186,7 @@ confirmation (the symbol, or `SELL ALL`). It can't switch to live trading or rea
 those stay in the dashboard.
 
 ## License
-Apache-2.0
+[Functional Source License 1.1, Apache 2.0 future license](LICENSE.md) (FSL-1.1-ALv2). Use it, change
+it, run it for yourself, learn from it, contribute: all free. What it doesn't allow is selling it, or a
+product built from it that does the same job, in competition with TaylorTrader. Each version becomes
+plain Apache 2.0 two years after it's released.

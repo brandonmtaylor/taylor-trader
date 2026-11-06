@@ -1,4 +1,4 @@
-"""TaylorTrader: an open-source autonomous trading bot for Alpaca, built safety-first.
+"""TaylorTrader: a source-available trading bot for Alpaca, built safety-first.
 
 Not financial advice. Runs on paper unless you explicitly enable live trading.
 """

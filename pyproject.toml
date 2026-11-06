@@ -1,9 +1,10 @@
 [project]
 name = "taylortrader"
 version = "0.1.0"
-description = "An open-source autonomous trading bot for Alpaca, built safety-first."
+description = "A trading bot and long-term investing autopilot for Alpaca, built safety-first."
 readme = "README.md"
-license = "Apache-2.0"
+license = "FSL-1.1-ALv2"
+license-files = ["LICENSE.md"]
 requires-python = ">=3.12"
 authors = [{ name = "Brandon Taylor" }]
 keywords = ["trading", "alpaca", "trading-bot", "investing", "backtesting"]

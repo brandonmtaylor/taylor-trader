@@ -93,7 +93,7 @@ function Dashboard() {
       {page === "/setup" && <SetupPage store={store} setup={setup} onSetup={onSetup} />}
       {page === "/guide" && <GuidePage />}
       <footer className="foot">
-        Runs on this computer only. Not financial advice. TaylorTrader is open-source software you run on your
+        Runs on this computer only. Not financial advice. TaylorTrader is software you run on your
         own account.
       </footer>
     </div>

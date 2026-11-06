@@ -1,6 +1,6 @@
 # TaylorTrader: Plan
 
-An open-source, autonomous stock-trading bot for Alpaca, built to be safe first.
+A source-available, autonomous stock-trading bot for Alpaca, built to be safe first.
 
 ## Why
 
@@ -28,7 +28,7 @@ It trades on paper unless you explicitly turn live trading on.
 | Dashboard | Local FastAPI + Vite/React/TS, served on localhost only |
 | Alerts | ntfy for live alerts, email for the daily summary |
 | Secrets | Env vars / macOS Keychain; nothing secret in the repo |
-| License | Apache-2.0 |
+| License | FSL-1.1-ALv2 (free to use, change and learn from; no competing commercial copies; each version becomes Apache-2.0 after two years). Chosen 2026-11-06 over Apache (anyone could sell a clone) and AGPL (protects hosting, which regulation makes impractical anyway). Decide any change before outside contributions arrive |
 | Audience | Built for me, open-source-ready from day one |
 
 ## Features carried over from the original bot
