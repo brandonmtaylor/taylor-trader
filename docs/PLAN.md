@@ -112,8 +112,10 @@ before any real money. Recorded here so the reasoning survives; numbers are in `
   - The bot's own five stocks (hourly 2 years, daily 6 years): nothing beat holding. These had huge
     runs (PLTR, NVDA, VRT), and picking them with hindsight makes holding hard to beat.
   - Fixed lists, no hindsight (the Dow 30 of 2020, the 9 sector funds), daily, 7 years: nothing beat
-    holding on the holdout. MACD with a 12% stop came closest: on the Dow its timing beat 99% of
-    random entries, it was in the market ~39% of the time, and its worst drop was a third smaller
+    holding on the holdout. MACD with a 12% stop came closest: on the Dow its timing beat 98% of
+    random entries (rerun 2026-11-06 after fixing the luck test so random runs match the winner's time
+    in the market; a second look at that holdout, so weigh it accordingly; in the sector funds it beat
+    only 67%, no better than chance), it was in the market ~39% of the time, and its worst drop was a third smaller
     (-20% vs. -31%). With 4% a year on idle cash it trailed holding by ~10 points on the holdout, and
     beat it in the sector funds' search period (+92% vs. +74%) but not their holdout.
 - **So**: for growth, a held mix is the evidence-backed default, which is what the invest plan does.
