@@ -87,7 +87,7 @@ def _domain() -> str:
 
 
 def _launchctl(*args: str, timeout: float = 20) -> subprocess.CompletedProcess:
-    return subprocess.run(["launchctl", *args], capture_output=True, text=True, timeout=timeout, check=False)
+    return subprocess.run(["/bin/launchctl", *args], capture_output=True, text=True, timeout=timeout, check=False)
 
 
 def status(label: str = SERVICE, dest: Path = AGENTS) -> dict:

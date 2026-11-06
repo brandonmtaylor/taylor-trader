@@ -1,10 +1,12 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { get, send, type ConfigDict, type SettingsResp } from "./api";
 
 /** Settings from the server plus a local draft. save() writes the whole config; the server validates it. */
 export function useSettings() {
   const [resp, setResp] = useState<SettingsResp | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const revision = useRef<string | undefined>(undefined);
+  revision.current = resp?.revision;
 
   const load = useCallback(async () => {
     try {
@@ -20,7 +22,9 @@ export function useSettings() {
   }, [load]);
 
   const save = useCallback(async (config: ConfigDict) => {
-    const r = await send<SettingsResp>("PUT", "/api/settings", { config });
+    // The revision makes the server refuse this save if settings changed elsewhere since it loaded,
+    // instead of quietly undoing that change.
+    const r = await send<SettingsResp>("PUT", "/api/settings", { config, revision: revision.current });
     setResp(r);
     return r;
   }, []);

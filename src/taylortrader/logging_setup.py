@@ -47,6 +47,7 @@ def setup_logging(log_dir: Path | None = None, level: int = logging.INFO) -> Non
     handlers: list[logging.Handler] = [logging.StreamHandler()]
     if log_dir is not None:
         log_dir.mkdir(parents=True, exist_ok=True)
+        log_dir.chmod(0o700)
         handlers.append(logging.FileHandler(log_dir / "taylortrader.log"))
     fmt = logging.Formatter("%(asctime)s %(levelname)-7s %(name)s: %(message)s", "%Y-%m-%d %H:%M:%S")
     root = logging.getLogger()

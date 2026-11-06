@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import smtplib
+import ssl
 import time
 import urllib.request
 from dataclasses import dataclass, field
@@ -69,7 +70,7 @@ class EmailNotifier(Notifier):
         if html:
             msg.add_alternative(html, subtype="html")
         with smtplib.SMTP(self.host, self.port, timeout=30) as s:
-            s.starttls()
+            s.starttls(context=ssl.create_default_context())  # the default doesn't verify the server
             s.login(self.sender, self._password.get_secret_value())
             s.send_message(msg)
 

@@ -529,3 +529,89 @@ def test_saving_a_plan_records_its_first_day(client):
     _assets(client)
     assert client.put("/api/invest", json={"plan": PLAN}, headers=WRITE).status_code == 200
     assert load_config(client.path).invest.start   # so missed days before it are never caught up
+
+
+# --- security review (2026-11-06) -------------------------------------------------------------------
+
+def signed_in_phone(tmp_path, monkeypatch):
+    mac, phone, w, _ = lan_clients(tmp_path, monkeypatch)
+    assert phone.post("/api/login", json={"passcode": CODE}, headers=w).status_code == 200
+    return mac, phone, w
+
+
+@pytest.mark.parametrize(("section", "field", "value"), [
+    ("alerts", "smtp_host", "evil.example.com"),
+    ("alerts", "ntfy_server", "https://evil.example.com"),
+    ("alerts", "email_to", ["thief@example.com"]),
+    ("ai", "endpoint", "https://evil.example.com/v1"),
+    ("ai", "provider", "openai"),
+])
+def test_a_phone_cant_redirect_where_secrets_are_sent(tmp_path, monkeypatch, section, field, value):
+    mac, phone, w = signed_in_phone(tmp_path, monkeypatch)
+    cfg = phone.get("/api/settings").json()["config"]
+    cfg[section][field] = value
+    r = phone.put("/api/settings", json={"config": cfg}, headers=w)
+    assert r.status_code == 403
+    assert mac.put("/api/settings", json={"config": cfg}, headers=WRITE).status_code == 200
+
+
+def test_a_phone_can_still_change_ordinary_settings_but_not_run_the_key_tests(tmp_path, monkeypatch):
+    _, phone, w = signed_in_phone(tmp_path, monkeypatch)
+    cfg = phone.get("/api/settings").json()["config"]
+    cfg["guardrails"]["max_trades_per_day"] = 3
+    assert phone.put("/api/settings", json={"config": cfg}, headers=w).status_code == 200
+    assert phone.post("/api/alerts/test", headers=w).status_code == 403
+    assert phone.post("/api/ai/test", headers=w).status_code == 403
+
+
+def test_with_real_money_a_phone_cant_change_settings_or_start_buying(tmp_path, monkeypatch):
+    mac, phone, w = signed_in_phone(tmp_path, monkeypatch)
+    with (tmp_path / ".env").open("a") as f:
+        f.write("ALPACA_LIVE_KEY_ID=goodlive\nALPACA_LIVE_SECRET_KEY=s3cretlive\n")
+    assert mac.post("/api/mode", json={"mode": "live", "confirm": "GO LIVE"}, headers=WRITE).status_code == 200
+    cfg = phone.get("/api/settings").json()["config"]
+    assert phone.put("/api/settings", json={"config": cfg}, headers=w).status_code == 403
+    r = phone.put("/api/invest", json={"plan": {**PLAN, "preview": False}, "confirm": "LIVE BUY $200.00 MONTHLY"}, headers=w)
+    assert r.status_code == 403
+    assert phone.post("/api/pause", json={"paused": True}, headers=w).status_code == 200  # stopping is always fine
+
+
+def test_other_websites_cant_trigger_reads_or_frame_the_page(client):
+    assert client.get("/api/status", headers={"Sec-Fetch-Site": "cross-site"}).status_code == 403
+    r = client.get("/api/status", headers={"Sec-Fetch-Site": "same-origin"})
+    assert r.status_code == 200 and r.headers["x-frame-options"] == "DENY"
+    assert "frame-ancestors 'none'" in r.headers["content-security-policy"]
+
+
+def test_a_stale_page_cant_undo_a_change_made_elsewhere(client):
+    first = client.get("/api/settings").json()
+    cfg = first["config"]
+    cfg["guardrails"]["max_trades_per_day"] = 4
+    assert client.put("/api/settings", json={"config": cfg, "revision": first["revision"]}, headers=WRITE).status_code == 200
+    cfg["guardrails"]["max_trades_per_day"] = 9              # an old tab, still on the first revision
+    r = client.put("/api/settings", json={"config": cfg, "revision": first["revision"]}, headers=WRITE)
+    assert r.status_code == 409 and "Reload" in r.json()["detail"]
+    assert load_config(client.path).limits.max_trades_per_day == 4
+
+
+def test_symbols_are_ticker_shaped_before_they_reach_files_or_the_broker(client):
+    assert client.get("/api/chart?symbol=../../etc").status_code == 422
+    r = client.post("/api/backtest", json={"strategy": "rsi_14", "symbol": "../x"}, headers=WRITE)
+    assert r.status_code == 422
+
+
+def test_odd_cookies_are_just_signed_out(tmp_path, monkeypatch):
+    _, phone, _, _ = lan_clients(tmp_path, monkeypatch)
+    for bad in ("9" * 5000 + ".x", "١٢٣.abc", "123.é"):
+        phone.cookies.set("tt_session", bad.encode("ascii", "ignore").decode() or "x")
+        assert phone.get("/api/status").status_code == 401
+    from taylortrader.web.remote import Sessions
+    assert not Sessions(CODE).valid("٣٣٣٣٣٣٣٣٣٣٣.é") and not Sessions(CODE).valid("9" * 5000 + ".x")
+
+
+def test_control_characters_in_a_setting_are_a_clear_error(client):
+    cfg = client.get("/api/settings").json()["config"]
+    cfg["ai"]["model"] = "ok"
+    cfg["alerts"]["email_from"] = "a\x01b"
+    r = client.put("/api/settings", json={"config": cfg}, headers=WRITE)
+    assert r.status_code == 422

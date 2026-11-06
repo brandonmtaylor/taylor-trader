@@ -20,12 +20,15 @@ PATTERNS = {
         r"(?i)\b[A-Z_]*(SECRET|API_KEY|KEY_ID|PASSWORD|TOKEN)[A-Z_]*\s*[:=]\s*['\"]?[A-Za-z0-9/+_\-]{12,}"
     ),
     "private key": re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----"),
+    "API key": re.compile(r"\bsk-(?:ant-|proj-)[A-Za-z0-9_\-]{20,}"),
+    "ntfy topic URL": re.compile(r"ntfy\.sh/[A-Za-z0-9_\-]{8,}"),
+    "healthcheck URL": re.compile(r"hc-ping\.com/[0-9a-f\-]{20,}"),
 }
-SKIP_SUFFIXES = {".png", ".jpg", ".jpeg", ".gif", ".ico", ".parquet", ".lock", ".svg", ".pdf"}
+SKIP_SUFFIXES = {".png", ".jpg", ".jpeg", ".gif", ".ico", ".parquet", ".pdf"}
 SKIP_FILES = {"LICENSE"}
 ALLOW_MARKER = "secretscan: allow"
 # The allow marker can silence generic patterns, never these.
-NEVER_ALLOWED = {"Alpaca key ID", "private key", "known credential value"}
+NEVER_ALLOWED = {"Alpaca key ID", "private key", "API key", "known credential value"}
 KNOWN_SECRET_NAMES = (
     "ALPACA_PAPER_KEY_ID", "ALPACA_PAPER_SECRET_KEY", "ALPACA_LIVE_KEY_ID", "ALPACA_LIVE_SECRET_KEY",
     "NTFY_TOPIC", "EMAIL_PASSWORD", "HEALTHCHECK_URL", "ANTHROPIC_API_KEY", "OPENAI_API_KEY",
@@ -71,18 +74,29 @@ def scan_text(text: str, known: set[str] | frozenset[str] = frozenset()) -> list
     return hits
 
 
-def scan(paths: list[Path], known: set[str] | None = None) -> list[tuple[Path, int, str]]:
+def staged_text(path: Path) -> str | None:
+    """What's actually being committed, which can differ from the file on disk."""
+    r = subprocess.run(["git", "show", f":{path}"], capture_output=True, check=False)
+    try:
+        return r.stdout.decode() if r.returncode == 0 else None
+    except UnicodeDecodeError:
+        return None
+
+
+def scan(paths: list[Path], known: set[str] | None = None, staged: bool = False) -> list[tuple[Path, int, str]]:
     known = known_secret_values() if known is None else known
     findings = []
     for path in paths:
-        if path.suffix.lower() in SKIP_SUFFIXES or path.name in SKIP_FILES or not path.is_file():
+        if path.suffix.lower() in SKIP_SUFFIXES or path.name in SKIP_FILES or (not staged and not path.is_file()):
             continue
         if path.name == ".env" or (path.name.startswith(".env.") and path.name != ".env.example"):
             findings.append((path, 0, ".env file should never be committed"))
             continue
         try:
-            text = path.read_text()
+            text = staged_text(path) if staged else path.read_text()
         except (UnicodeDecodeError, OSError):
+            continue
+        if text is None:
             continue
         findings.extend((path, lineno, label) for lineno, label in scan_text(text, known))
     return findings
@@ -90,7 +104,8 @@ def scan(paths: list[Path], known: set[str] | None = None) -> list[tuple[Path, i
 
 def main(argv: list[str] | None = None) -> int:
     argv = sys.argv[1:] if argv is None else argv
-    findings = scan(files_to_scan(staged="--staged" in argv))
+    staged = "--staged" in argv
+    findings = scan(files_to_scan(staged=staged), staged=staged)
     for path, lineno, label in findings:
         print(f"possible secret: {path}:{lineno}: {label}", file=sys.stderr)
     if findings:

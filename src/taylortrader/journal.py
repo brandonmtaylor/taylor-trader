@@ -11,6 +11,8 @@ import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
 
+from taylortrader.logging_setup import redact
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS orders (
     id INTEGER PRIMARY KEY,
@@ -94,8 +96,10 @@ def now_iso() -> str:
 class Journal:
     def __init__(self, path: Path):
         path.parent.mkdir(parents=True, exist_ok=True)
+        path.parent.chmod(0o700)  # trades, balances and logs are nobody else's business
         self.path = path
         self.db = sqlite3.connect(path, isolation_level=None, check_same_thread=False)
+        path.chmod(0o600)
         self.db.row_factory = sqlite3.Row
         self.db.execute("PRAGMA journal_mode=WAL")
         self.db.executescript(SCHEMA)
@@ -117,7 +121,7 @@ class Journal:
             "INSERT INTO orders (ts, mode, strategy, symbol, side, qty, est_price, stop_price, "
             "take_profit_price, reason, broker_order_id, status, detail) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (now_iso(), mode, strategy, symbol, side, qty, est_price, stop_price, take_profit_price,
-             reason, broker_order_id, status, detail),
+             reason, broker_order_id, status, redact(detail)),
         )
         return cur.lastrowid
 
@@ -200,7 +204,7 @@ class Journal:
 
     def event(self, kind: str, message: str, level: str = "info") -> None:
         self.db.execute("INSERT INTO events (ts, level, kind, message) VALUES (?,?,?,?)",
-                        (now_iso(), level, kind, message))
+                        (now_iso(), level, kind, redact(message)))
 
     def events_since(self, ts_iso: str) -> list[sqlite3.Row]:
         return list(self.db.execute("SELECT * FROM events WHERE ts >= ? ORDER BY ts", (ts_iso,)))

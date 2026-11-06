@@ -16,7 +16,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
-      - run: uv sync
+      - run: uv sync --locked
       - run: uv run ruff check src tests
       - run: uv run pytest -q
       # The same secret scan the pre-commit hook runs, over every tracked file.

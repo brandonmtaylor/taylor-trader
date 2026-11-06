@@ -490,7 +490,8 @@ def cmd_dashboard(args) -> int:
         threading.Timer(1.0, lambda: webbrowser.open(url)).start()
     # Don't wait on open browser polls when stopping: a restart after an update should take a second.
     uvicorn.run(create_app(rt, passcode=passcode), host="0.0.0.0" if passcode else "127.0.0.1",
-                port=args.port, log_level="warning", timeout_graceful_shutdown=2)
+                port=args.port, log_level="warning", log_config=None,  # our handlers: they redact
+                timeout_graceful_shutdown=2)
     return 0
 
 

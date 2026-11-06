@@ -12,8 +12,11 @@ Secret values go in and never come back out: the API reports only whether, and w
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 import os
+import re
 import time
 from collections import defaultdict
 from dataclasses import asdict, replace
@@ -69,6 +72,8 @@ FORBIDDEN = "Changes must come from the TaylorTrader dashboard."
 class TTLCache:
     """Tiny cache so a browser polling every few seconds doesn't hammer Alpaca's rate limit."""
 
+    MAX_ENTRIES = 256  # keys can come from the request: don't let them grow without end
+
     def __init__(self, ttl: float):
         self.ttl, self._data = ttl, {}
 
@@ -77,6 +82,8 @@ class TTLCache:
         if hit and time.monotonic() - hit[0] < self.ttl:
             return hit[1]
         value = fn()
+        if len(self._data) >= self.MAX_ENTRIES:
+            self._data.clear()
         self._data[key] = (time.monotonic(), value)
         return value
 
@@ -121,6 +128,22 @@ def _downsample(series, n: int = 400) -> list[dict]:
 
 class SettingsBody(BaseModel):
     config: dict[str, Any]
+    revision: str | None = None  # the settings this edit started from; a stale page is refused
+
+
+def config_revision(cfg: Config) -> str:
+    return hashlib.sha256(json.dumps(config_to_dict(cfg), sort_keys=True, default=str).encode()).hexdigest()[:16]
+
+
+SYMBOL = re.compile(r"^[A-Z][A-Z0-9.\-]{0,9}(/[A-Z]{2,5})?$")  # stocks, and crypto pairs like BTC/USD
+
+
+def clean_symbol(symbol: str) -> str:
+    """Symbols become part of cache file names and broker requests: only ticker shapes get through."""
+    symbol = symbol.strip().upper()
+    if not SYMBOL.match(symbol):
+        raise HTTPException(422, f"{symbol[:15]!r} doesn't look like a ticker symbol.")
+    return symbol
 
 
 class InvestBody(BaseModel):
@@ -211,6 +234,10 @@ def create_app(rt: Runtime, cache_ttl: float = 10.0, project: Path | None = None
         if not host_allowed(request.headers.get("host", ""), sessions is not None, name):
             return PlainTextResponse("Invalid host header", status_code=400)
         path = request.url.path
+        # Browsers say where a request came from. Another website must not be able to trigger reads:
+        # they cost Keychain lookups and Alpaca's rate limit, even if the site can't see the answer.
+        if path.startswith("/api/") and request.headers.get("sec-fetch-site") == "cross-site":
+            return JSONResponse({"detail": FORBIDDEN}, status_code=403)
         if path.startswith("/api/") and path not in OPEN_PATHS and not signed_in(request):
             return JSONResponse({"detail": SIGN_IN}, status_code=401)
         return await call_next(request)
@@ -219,6 +246,18 @@ def create_app(rt: Runtime, cache_ttl: float = 10.0, project: Path | None = None
         """Same line the phone app will hold: real money and keys are changed on the Mac."""
         if not here(request):
             raise HTTPException(403, MAC_ONLY)
+
+    def check_remote_settings(request: Request, current: Config, new: Config) -> None:
+        """What a device on the Wi-Fi can't change. Where alerts and AI requests go decides where the
+        email password and API keys are sent, so a stolen session could collect them there. And with
+        real money, settings are changed on the Mac: a phone can still pause and sell."""
+        if here(request):
+            return
+        if current.mode == "live":
+            raise HTTPException(403, "With real money, settings can only be changed on the Mac.")
+        destinations = lambda c: (c.alerts, c.ai.provider, c.ai.endpoint)
+        if destinations(current) != destinations(new):
+            raise HTTPException(403, "Alert destinations and the AI provider can only be changed on the Mac.")
 
     cache = TTLCache(cache_ttl)
     slow_cache = TTLCache(max(cache_ttl, 300.0))  # price history and grades: minutes old is fine
@@ -500,6 +539,8 @@ def create_app(rt: Runtime, cache_ttl: float = 10.0, project: Path | None = None
     def trade_chart(symbol: str = Query("", max_length=15),
                     period: str = Query("1M", pattern="^(1W|1M|3M|1A)$")) -> dict[str, Any]:
         """A stock's price with the bot's buys, sells and AI calls on it, and how each trade was timed."""
+        if symbol.strip():
+            symbol = clean_symbol(symbol)
         from taylortrader import chart
 
         broker = need_broker()
@@ -509,7 +550,7 @@ def create_app(rt: Runtime, cache_ttl: float = 10.0, project: Path | None = None
         recent = [f.symbol for f in sorted(fills, key=lambda f: f.ts, reverse=True)]
         watched = [s for sc in rt.settings.enabled_strategies for s in sc.symbols]
         symbols = [s for s in dict.fromkeys([*held, *recent, *watched]) if "/" not in s]  # stocks, not crypto
-        symbol = symbol.strip().upper() or (symbols[0] if symbols else "")
+        symbol = symbol or (symbols[0] if symbols else "")
         if not symbol:
             return {"symbols": [], "symbol": None}
         md = need_data()
@@ -534,6 +575,7 @@ def create_app(rt: Runtime, cache_ttl: float = 10.0, project: Path | None = None
     def settings() -> dict[str, Any]:
         return {
             "config": config_to_dict(rt.settings),
+            "revision": config_revision(rt.settings),
             "configured": rt.configured,
             "catalog": list_strategies(),
             "hard_limits": asdict(HARD_LIMITS),
@@ -544,9 +586,12 @@ def create_app(rt: Runtime, cache_ttl: float = 10.0, project: Path | None = None
     # --- writes ----------------------------------------------------------------------------------
 
     @app.put("/api/settings", dependencies=[Depends(guard)])
-    def put_settings(body: SettingsBody) -> dict[str, Any]:
+    def put_settings(body: SettingsBody, request: Request) -> dict[str, Any]:
         """Strategies, limits, alerts, data feed. Mode is never changed here: see /api/mode."""
         current = rt.settings
+        if body.revision and body.revision != config_revision(current):
+            raise HTTPException(409, "Settings changed somewhere else since this page loaded (another tab, "
+                                     "Claude or a device). Reload the page and make your change again.")
         raw = dict(body.config)
         raw.update(mode=current.mode, dry_run=current.dry_run, data_dir=str(current.data_dir))
         raw["invest"] = asdict(current.invest)  # the invest plan has its own endpoint, with its own confirmation
@@ -554,6 +599,7 @@ def create_app(rt: Runtime, cache_ttl: float = 10.0, project: Path | None = None
             new = parse_config(raw)
         except ConfigError as e:
             raise HTTPException(422, str(e)) from None
+        check_remote_settings(request, current, new)
         save(new)
         rt.journal.event("settings", "settings saved from the dashboard")
         return settings()
@@ -622,7 +668,7 @@ def create_app(rt: Runtime, cache_ttl: float = 10.0, project: Path | None = None
                 "mixes": slow_cache.get(key, load)}
 
     @app.put("/api/invest", dependencies=[Depends(guard)])
-    def put_invest(body: InvestBody) -> dict[str, Any]:
+    def put_invest(body: InvestBody, request: Request) -> dict[str, Any]:
         """Save the invest plan. Turning on real buying needs `confirm`: the exact amount and schedule
         on paper, plus the typed phrase on a live account."""
         current = rt.settings
@@ -637,6 +683,8 @@ def create_app(rt: Runtime, cache_ttl: float = 10.0, project: Path | None = None
             # saved again later with a new start is a new lump sum.
             new = replace(new, start=datetime.now(NY).date().isoformat())
         real = new.enabled and not new.preview
+        if real and current.mode == "live":
+            mac_only(request)  # starting or changing real-money buying is never done from a phone
         was_real = current.invest.enabled and not current.invest.preview
         bigger = new.amount > current.invest.amount or new.holdings != current.invest.holdings \
             or new.every != current.invest.every
@@ -790,7 +838,7 @@ def create_app(rt: Runtime, cache_ttl: float = 10.0, project: Path | None = None
         cache.clear()
         return {"sold": sold, "failed": failed, "paused": True}
 
-    @app.post("/api/alerts/test", dependencies=[Depends(guard)])
+    @app.post("/api/alerts/test", dependencies=[Depends(guard), Depends(mac_only)])
     def alerts_test() -> dict[str, Any]:
         from taylortrader.alerts import Level
         from taylortrader.app import build_alerts
@@ -801,7 +849,7 @@ def create_app(rt: Runtime, cache_ttl: float = 10.0, project: Path | None = None
         alerts.send("TaylorTrader test alert", "If you can read this, alerts work.", Level.WARNING, email_copy=True)
         return {"sent": True, "channels": notes}
 
-    @app.post("/api/ai/test", dependencies=[Depends(guard)])
+    @app.post("/api/ai/test", dependencies=[Depends(guard), Depends(mac_only)])
     def ai_test() -> dict[str, Any]:
         """One tiny call to the configured model: proves the key, model name and JSON output work."""
         from taylortrader import llm
@@ -844,6 +892,7 @@ def create_app(rt: Runtime, cache_ttl: float = 10.0, project: Path | None = None
         from taylortrader.secrets import load_alpaca_credentials
         from taylortrader.strategies import get_strategy
 
+        clean_symbol(body.symbol)
         if body.timeframe not in TIMEFRAMES:
             raise HTTPException(422, f"timeframe must be one of {TIMEFRAMES}")
         days = min(body.days, 60) if body.timeframe == "1Min" else body.days
@@ -880,6 +929,8 @@ def create_app(rt: Runtime, cache_ttl: float = 10.0, project: Path | None = None
         response = await call_next(request)
         if not request.url.path.startswith("/assets/"):
             response.headers["Cache-Control"] = "no-cache"
+        response.headers["X-Frame-Options"] = "DENY"  # no clickjacking: this page is never framed
+        response.headers["Content-Security-Policy"] = "frame-ancestors 'none'"
         return response
 
     @app.exception_handler(404)

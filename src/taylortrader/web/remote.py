@@ -58,7 +58,7 @@ def is_loopback(client_host: str | None) -> bool:
 def mac_name() -> str | None:
     """This Mac's Bonjour name, e.g. "Brandons-Mac-mini" (reachable as Brandons-Mac-mini.local)."""
     try:
-        r = subprocess.run(["scutil", "--get", "LocalHostName"], capture_output=True, text=True, timeout=5, check=False)
+        r = subprocess.run(["/usr/sbin/scutil", "--get", "LocalHostName"], capture_output=True, text=True, timeout=5, check=False)
         return r.stdout.strip() or None
     except (OSError, subprocess.TimeoutExpired):
         return None
@@ -109,12 +109,12 @@ class Sessions:
         return f"{expires}.{self._sig(expires)}"
 
     def valid(self, cookie: str | None) -> bool:
-        if not cookie or "." not in cookie:
+        if not cookie or "." not in cookie or len(cookie) > 128:
             return False
         exp, _, sig = cookie.partition(".")
-        if not exp.isdigit() or int(exp) < self._clock():
+        if not (exp.isascii() and exp.isdigit()) or int(exp) < self._clock():
             return False
-        return hmac.compare_digest(sig, self._sig(int(exp)))
+        return hmac.compare_digest(sig.encode(), self._sig(int(exp)).encode())
 
     def _trim(self, q: deque[float]) -> None:
         cutoff = self._clock() - WINDOW_S

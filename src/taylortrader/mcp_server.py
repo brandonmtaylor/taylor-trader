@@ -87,6 +87,12 @@ class Bot:
         return self.send("PUT", "/api/settings", {"config": config}, note)["config"]
 
 
+def _not_with_real_money(cfg: dict) -> None:
+    """A prompt-injected session shouldn't be able to add risk to a live account."""
+    if cfg.get("mode") == "live":
+        raise ToolError("With real money, strategies and looser limits are changed in the dashboard, not from Claude.")
+
+
 def _strategy_view(cfg: dict) -> list[dict]:
     return [{"number": i + 1, **s} for i, s in enumerate(cfg["strategies"])]
 
@@ -176,6 +182,7 @@ def build(config_path: Path = Path("config.toml")) -> MCPServer:
         """Change one strategy (by its number from get_strategies). Only the fields you pass change;
         `params` are merged into the existing ones. Validated like the dashboard."""
         cfg = bot.config()
+        _not_with_real_money(cfg)
         if not 1 <= number <= len(cfg["strategies"]):
             raise ToolError(f"There's no strategy {number}; there are {len(cfg['strategies'])}.")
         s = cfg["strategies"][number - 1]
@@ -200,6 +207,7 @@ def build(config_path: Path = Path("config.toml")) -> MCPServer:
         """Add a strategy. `name` is one of the available types from get_strategies. Each symbol can
         belong to only one strategy."""
         cfg = bot.config()
+        _not_with_real_money(cfg)
         cfg["strategies"].append({"name": name, "symbols": [x.upper() for x in symbols], "timeframe": timeframe,
                                   "allocation_pct": allocation_pct, "stop_loss_pct": stop_loss_pct,
                                   "take_profit_pct": take_profit_pct, "enabled": enabled, "params": params or {}})
@@ -226,6 +234,8 @@ def build(config_path: Path = Path("config.toml")) -> MCPServer:
         changes = {k: v for k, v in locals().items() if k not in ("cfg",) and v is not None and k.startswith("max_")}
         if not changes:
             raise ToolError("Nothing to change: pass at least one limit.")
+        if any(v > cfg["guardrails"][k] for k, v in changes.items()):
+            _not_with_real_money(cfg)  # tightening is always fine
         cfg["guardrails"].update(changes)
         saved = bot.save(cfg, f"limits changed: {changes}")
         return {"saved": True, "limits": saved["guardrails"]}

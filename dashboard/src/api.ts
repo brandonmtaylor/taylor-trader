@@ -217,6 +217,7 @@ export interface CatalogItem {
 }
 
 export interface SettingsResp {
+  revision: string;
   config: ConfigDict;
   configured: boolean;
   catalog: CatalogItem[];

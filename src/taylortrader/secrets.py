@@ -18,6 +18,7 @@ from pathlib import Path
 from pydantic import SecretStr
 
 KEYCHAIN_SERVICE = "taylortrader"
+SECURITY = "/usr/bin/security"  # the system tool by full path: nothing earlier on PATH can stand in for it
 LIVE_CONFIRM_VAR = "TAYLORTRADER_ALLOW_LIVE"
 # Set only from the command line on the Mac (`taylortrader wifi on`), never through the dashboard.
 DASHBOARD_PASSCODE_VAR = "TAYLORTRADER_DASHBOARD_PASSCODE"
@@ -67,7 +68,7 @@ def _read_keychain(name: str, service: str = KEYCHAIN_SERVICE) -> str | None:
         return None
     try:
         result = subprocess.run(
-            ["security", "find-generic-password", "-s", service, "-a", name, "-w"],
+            [SECURITY, "find-generic-password", "-s", service, "-a", name, "-w"],
             capture_output=True,
             text=True,
             timeout=10,
@@ -146,37 +147,47 @@ def _write_dotenv(path: Path, name: str, value: str | None) -> None:
     lines = [ln for ln in lines if ln.partition("=")[0].strip() != name]
     if value is not None:
         lines.append(f"{name}={value}")
-    path.write_text("\n".join(lines) + "\n")
-    path.chmod(0o600)
+    tmp = path.with_name(path.name + ".tmp")  # private from the moment it exists, then swapped in
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as f:
+        f.write("\n".join(lines) + "\n")
+    tmp.replace(path)
+
+
+def _write_keychain(name: str, value: str) -> None:
+    """The value goes over stdin (`security -i`), never in the command's arguments: arguments are
+    visible in `ps` to every user on the machine, and end up in the text of a timeout error."""
+    quoted = value.replace("\\", "\\\\").replace('"', '\\"')
+    command = f'add-generic-password -U -s {KEYCHAIN_SERVICE} -a {name} -w "{quoted}"\n'
+    try:
+        subprocess.run([SECURITY, "-i"], input=command, capture_output=True, text=True, timeout=30, check=False)
+    except (OSError, subprocess.TimeoutExpired):
+        raise SecretsError(f"The Keychain didn't answer while storing {name}. Is it locked?") from None
+    if _read_keychain(name) != value:  # `security -i` exits 0 even when a command fails
+        raise SecretsError(f"The Keychain refused to store {name}.")
 
 
 def set_secret(name: str, value: str, dotenv_path: Path | None = None) -> str:
     """Store a secret in the Keychain (macOS) or .env (elsewhere, mode 600). Returns where."""
     value = _check_value(name, value)
-    if keychain_available():
-        # The value is passed as an argument, so it's briefly visible to other processes run by
-        # this same user. Acceptable on a single-user Mac; the Keychain is still where it lives.
-        r = subprocess.run(
-            ["security", "add-generic-password", "-U", "-s", KEYCHAIN_SERVICE, "-a", name, "-w", value],
-            capture_output=True, timeout=10, check=False,
-        )
-        if r.returncode != 0:
-            raise SecretsError(f"Keychain refused to store {name} (exit {r.returncode})")
-        where = "Keychain"
-    else:
-        _write_dotenv(dotenv_path or Path(".env"), name, value)
-        where = ".env"
     if name != LIVE_CONFIRM_VAR:
-        _LOADED_SECRETS.add(value)
-    return where
+        _LOADED_SECRETS.add(value)  # before storing: an error on the way must already mask it
+    if keychain_available():
+        _write_keychain(name, value)
+        return "Keychain"
+    _write_dotenv(dotenv_path or Path(".env"), name, value)
+    return ".env"
 
 
 def delete_secret(name: str, dotenv_path: Path | None = None) -> None:
     if name not in (*SETTABLE, *_STORABLE_ELSEWHERE):
         raise SecretsError(f"{name} isn't a setting TaylorTrader stores")
     if keychain_available():
-        subprocess.run(["security", "delete-generic-password", "-s", KEYCHAIN_SERVICE, "-a", name],
-                       capture_output=True, timeout=10, check=False)
+        try:
+            subprocess.run([SECURITY, "delete-generic-password", "-s", KEYCHAIN_SERVICE, "-a", name],
+                           capture_output=True, timeout=10, check=False)
+        except (OSError, subprocess.TimeoutExpired):
+            raise SecretsError(f"The Keychain didn't answer while removing {name}.") from None
     path = dotenv_path or Path(".env")
     if path.is_file() and name in _read_dotenv(path):
         _write_dotenv(path, name, None)

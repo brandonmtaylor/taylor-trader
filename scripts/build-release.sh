@@ -9,7 +9,7 @@ rm -rf dist
 uv build
 # The wheel must carry the dashboard, or installs open a blank page.
 python3 - <<'PY'
-import glob, sys, zipfile
+import glob, sys, tarfile, zipfile
 whl = glob.glob("dist/*.whl")[0]
 names = zipfile.ZipFile(whl).namelist()
 if "taylortrader/web/static/index.html" not in names:
@@ -17,5 +17,10 @@ if "taylortrader/web/static/index.html" not in names:
 bad = [n for n in names if n.endswith((".env", "config.toml")) or "/var/" in n]
 if bad:
     sys.exit(f"{whl} contains files that must never ship: {bad}")
+sdist = glob.glob("dist/*.tar.gz")[0]
+bad = [n for n in tarfile.open(sdist).getnames()
+       if n.endswith((".env", "/config.toml", ".bak")) or "/var/" in n or "/journal/" in n]
+if bad:
+    sys.exit(f"{sdist} contains files that must never ship: {bad}")
 print(f"ok: {whl} ({len(names)} files, dashboard included)")
 PY

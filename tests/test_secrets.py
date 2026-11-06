@@ -110,3 +110,72 @@ def test_the_live_flag_isnt_treated_as_a_secret(fake_env, monkeypatch):
         assert redact("12 shares") == "12 shares"
     finally:
         secrets._LOADED_SECRETS.discard("12")
+
+
+# --- security review (2026-11-06) -------------------------------------------------------------------
+
+def test_a_keychain_timeout_doesnt_put_the_secret_in_the_error(monkeypatch):
+    import subprocess
+
+    from taylortrader import secrets as s
+
+    seen = {}
+
+    def hang(cmd, **kw):
+        seen.update(cmd=cmd, input=kw.get("input"))
+        raise subprocess.TimeoutExpired(cmd, 30)
+
+    monkeypatch.setattr(s, "keychain_available", lambda: True)
+    monkeypatch.setattr(s.subprocess, "run", hang)
+    value = "s3cret-value-for-the-test"
+    with pytest.raises(s.SecretsError) as e:
+        s.set_secret("EMAIL_PASSWORD", value)
+    assert value not in str(e.value) and e.value.__suppress_context__
+    assert value not in " ".join(seen["cmd"]) and value in seen["input"]   # stdin, never arguments
+    assert value in s.loaded_secret_values()                               # already masked in logs
+
+
+def test_values_are_quoted_for_the_keychain_command(monkeypatch):
+    from taylortrader import secrets as s
+
+    seen = {}
+    monkeypatch.setattr(s.subprocess, "run", lambda cmd, **kw: seen.update(input=kw["input"]))
+    monkeypatch.setattr(s, "_read_keychain", lambda name: 'a"b\\c')
+    s._write_keychain("EMAIL_PASSWORD", 'a"b\\c')
+    assert seen["input"].endswith('-w "a\\"b\\\\c"\n')
+
+
+def test_email_verifies_the_server():
+    import ssl
+    from unittest import mock
+
+    from pydantic import SecretStr
+
+    from taylortrader.alerts import EmailNotifier
+
+    with mock.patch("smtplib.SMTP") as smtp:
+        EmailNotifier("a@example.com", SecretStr("x"), ["b@example.com"]).send("t", "m")
+    ctx = smtp.return_value.__enter__.return_value.starttls.call_args.kwargs["context"]
+    assert ctx.verify_mode == ssl.CERT_REQUIRED and ctx.check_hostname
+
+
+@pytest.mark.parametrize("line", [
+    "key = sk-" + "ant-api03-abcdefghijklmnopqrstuvwx",   # split so this file doesn't trip the scan
+    "url = https://ntfy" + ".sh/my-private-topic-123",
+    "ping https://hc-ping" + ".com/0a1b2c3d-1111-2222-3333-444455556666",
+])
+def test_secretscan_catches_more_shapes(line):
+    from taylortrader.secretscan import scan_text
+
+    assert scan_text(line)
+
+
+@pytest.mark.parametrize(("alerts", "msg"), [
+    ({"smtp_port": "x"}, "smtp_port"), ({"email_to": "me@example.com"}, "email_to"),
+    ({"ntfy_server": "not a url"}, "ntfy_server"), ({"smtp_host": "a b"}, "smtp_host"),
+])
+def test_alert_settings_are_validated(alerts, msg):
+    from taylortrader.config import ConfigError, parse_config
+
+    with pytest.raises(ConfigError, match=msg):
+        parse_config({"alerts": alerts})

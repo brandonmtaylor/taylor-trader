@@ -106,8 +106,8 @@ Phases 1–2 cover what most people want. Phase 3 can wait until someone needs s
 ## Decisions for the owner
 
 1. **Same paper account or a separate one during the paper trial?** Same account is the real
-   design (slices), but it changes how much the trading strategies get during their trial, and the
-   paper account only has about $1,100. Options: raise the paper balance (reset it in Alpaca) and
+   design (slices), but it changes how much the trading strategies get during their trial, and a
+   small paper account can't fund both. Options: raise the paper balance (reset it in Alpaca) and
    run both, or keep the plan in preview-only mode until the trading trial ends.
 2. **Which example portfolios to include.** Suggested: a three-fund (US/international/bonds) at
    80/20 and 60/40 stocks/bonds, a single all-world fund (VT), and a conservative mostly-bonds mix.

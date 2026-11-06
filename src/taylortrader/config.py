@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 import re
+import shutil
 import tomllib
 from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
@@ -245,6 +246,15 @@ def _parse_config(raw: dict[str, Any]) -> Config:
         raise ConfigError("[ai] timeout_seconds must be between 10 and 600")
 
     invest = parse_invest(raw.get("invest", {}), owners)
+    alerts = _section(AlertsConfig, "alerts")
+    if not re.match(r"^https?://[^\s]+$", alerts.ntfy_server):
+        raise ConfigError("[alerts] ntfy_server must be an http(s) address")
+    if not re.match(r"^[A-Za-z0-9.\-]{1,253}$", alerts.smtp_host):
+        raise ConfigError("[alerts] smtp_host must be a host name")
+    if isinstance(alerts.smtp_port, bool) or not isinstance(alerts.smtp_port, int) or not 1 <= alerts.smtp_port <= 65535:
+        raise ConfigError("[alerts] smtp_port must be a port number")
+    if not isinstance(alerts.email_to, list) or not all(isinstance(a, str) and "@" in a for a in alerts.email_to):
+        raise ConfigError('[alerts] email_to must be a list of addresses, like ["you@example.com"]')
     service = _section(ServiceConfig, "service")
     if not 5 <= _number("[service]", "loop_seconds", service.loop_seconds) <= 3600:
         raise ConfigError("[service] loop_seconds must be between 5 and 3600")
@@ -258,7 +268,7 @@ def _parse_config(raw: dict[str, Any]) -> Config:
         feed=feed,
         strategies=strategies,
         limits=limits,
-        alerts=_section(AlertsConfig, "alerts"),
+        alerts=alerts,
         service=service,
         ai=ai,
         invest=invest,
@@ -401,11 +411,14 @@ def save_config(cfg_or_raw: Config | dict[str, Any], path: Path | str = "config.
     cfg = parse_config(raw)  # raises ConfigError before anything is written
     path = Path(path)
     text = render_toml(config_to_dict(cfg), path.name)
-    if parse_config(tomllib.loads(text)) != cfg:  # the writer must round-trip exactly
-        raise ConfigError("internal error: settings didn't survive being written; nothing was saved")
+    try:
+        if parse_config(tomllib.loads(text)) != cfg:  # the writer must round-trip exactly
+            raise ConfigError("internal error: settings didn't survive being written; nothing was saved")
+    except tomllib.TOMLDecodeError:
+        raise ConfigError("a setting contains characters that can't be saved (like a control character)") from None
     tmp = path.with_suffix(".tmp")
     tmp.write_text(text)
     if path.exists():
-        path.replace(path.with_name(path.name + ".bak"))
+        shutil.copy2(path, path.with_name(path.name + ".bak"))  # a copy, so config.toml never goes missing
     tmp.replace(path)
     return cfg

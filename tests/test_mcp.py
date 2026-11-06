@@ -1,12 +1,13 @@
 """The MCP server drives the dashboard API in-process: same validation, same refusals."""
 
 import asyncio
+import dataclasses
 import json
 
 import pytest
 
 from taylortrader import mcp_server
-from taylortrader.config import Config, StrategyConfig, load_config
+from taylortrader.config import Config, StrategyConfig, load_config, save_config
 from taylortrader.service import kill_file
 from tests.test_web import make_client, no_keychain  # noqa: F401  (fixture used automatically)
 
@@ -91,3 +92,17 @@ def test_invest_plan_can_be_read_and_turned_down_but_not_up(server):
     assert call(server, "set_invest_plan_state", state="off") == {"enabled": False, "preview": True}
     tools = {t.name for t in asyncio.run(server.list_tools())}
     assert "set_invest_plan_state" in tools and not any("start" in t and "invest" in t for t in tools)
+
+
+def test_claude_cant_add_risk_to_a_live_account(server):
+    c = server.client
+    save_config(dataclasses.replace(load_config(c.path), mode="live"), c.path)
+    c.rt.reload()
+    for tool, args in [("add_strategy", {"name": "macd_rsi", "symbols": ["AAPL"]}),
+                       ("update_strategy", {"number": 1, "allocation_pct": 20}),
+                       ("update_limits", {"max_daily_loss_pct": 5})]:
+        with pytest.raises(Exception, match="real money"):
+            r = asyncio.run(server.call_tool(tool, args))
+            if r.is_error:
+                raise RuntimeError("".join(getattr(c, "text", "") for c in r.content))
+    call(server, "update_limits", max_daily_loss_pct=1)  # tightening still works
