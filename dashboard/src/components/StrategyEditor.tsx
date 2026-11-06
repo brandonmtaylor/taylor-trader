@@ -8,6 +8,8 @@ const TF_LABEL: Record<string, string> = {
   "1Min": "1 minute", "5Min": "5 minutes", "15Min": "15 minutes", "1Hour": "1 hour", "1Day": "1 day",
 };
 
+const RULE_NAMES = "close, open, high, low, volume, ma_20, ma_200, rsi, macd, macd_signal, macd_diff, chaikin";
+
 /** "rsi_buy" -> "RSI buy", "legacy_crossover" -> "Legacy crossover" */
 function paramLabel(k: string): string {
   const words = k.split("_").map((w) => (["rsi", "macd", "ma"].includes(w) ? w.toUpperCase() : w));
@@ -92,7 +94,7 @@ export function StrategyEditor({ value, onChange, onRemove, catalog, limits, tim
       {isAI && <AIFields value={value} onChange={onChange} dailyLimit={aiDailyLimit} defaults={entry?.params ?? {}} />}
 
       {!isAI && entry && Object.keys(entry.params).length > 0 && (
-        <details className="params">
+        <details className="params" open={value.name === "rule"}>
           <summary>Fine-tune <span className="params__count">{Object.keys(value.params).length} changed</span></summary>
           <div className="grid-fields">
             {Object.entries(entry.params).map(([k, def]) => {
@@ -110,11 +112,16 @@ export function StrategyEditor({ value, onChange, onRemove, catalog, limits, tim
                   <p className="field__hint">Default {def ? "yes" : "no"}</p>
                 </div>
               ) : (
-                <Labeled key={k} label={paramLabel(k)} hint={`Default ${String(def)}`} render={(id) =>
-                  typeof def === "number"
-                    ? <NumberInput id={id} value={Number(cur)} onChange={update} />
-                    : <input id={id} className="input" value={String(cur)} onChange={(e) => update(e.target.value)} />
-                } />
+                <Labeled key={k} label={paramLabel(k)} wide={typeof def === "string"}
+                  hint={typeof def === "string" && value.name === "rule"
+                    ? <>Default <code>{String(def)}</code>. Use {RULE_NAMES}, numbers, + − × ÷, comparisons, and/or/not; <code>prev_</code> means the bar before.</>
+                    : `Default ${String(def)}`}
+                  render={(id) =>
+                    typeof def === "number"
+                      ? <NumberInput id={id} value={Number(cur)} onChange={update} />
+                      : <input id={id} className={`input ${value.name === "rule" ? "input--mono" : ""}`} value={String(cur)}
+                          spellCheck={false} onChange={(e) => update(e.target.value)} />
+                  } />
               );
             })}
           </div>
