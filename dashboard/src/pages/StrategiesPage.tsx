@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { StrategyCfg } from "../api";
 import { NoticeLine, useAction } from "../components/forms";
 import { StrategyEditor } from "../components/StrategyEditor";
@@ -13,11 +13,15 @@ export function StrategiesPage({ store }: { store: SettingsStore }) {
   const resp = store.resp;
   const [draft, setDraft] = useState<StrategyCfg[] | null>(null);
   const act = useAction();
+  // Stable keys, so removing a strategy doesn't leave its backtest result showing under the next one.
+  const ids = useRef<number[]>([]);
+  const nextId = useRef(0);
   useEffect(() => {
     if (resp && draft === null) setDraft(clone(resp.config.strategies));
   }, [resp, draft]);
   if (!resp || !draft) return <main className="page"><p className="empty">{store.error ?? "Loading…"}</p></main>;
 
+  while (ids.current.length < draft.length) ids.current.push(nextId.current++);
   const dirty = !same(draft, resp.config.strategies);
   const save = () => act.run(async () => {
     const r = await store.save({ ...resp.config, strategies: draft });
@@ -44,14 +48,14 @@ export function StrategiesPage({ store }: { store: SettingsStore }) {
       <div className="stack">
         {draft.map((s, i) => (
           <StrategyEditor
-            key={i}
+            key={ids.current[i]}
             index={i}
             value={s}
             catalog={resp.catalog}
             limits={resp.config.guardrails}
             timeframes={resp.timeframes} aiDailyLimit={resp.config.ai.max_calls_per_day}
             onChange={(v) => setDraft(draft.map((d, j) => (j === i ? v : d)))}
-            onRemove={() => setDraft(draft.filter((_, j) => j !== i))}
+            onRemove={() => { ids.current.splice(i, 1); setDraft(draft.filter((_, j) => j !== i)); }}
           />
         ))}
       </div>
