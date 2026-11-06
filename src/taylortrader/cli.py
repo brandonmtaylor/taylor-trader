@@ -458,7 +458,8 @@ def cmd_dashboard(args) -> int:
         print("No settings yet: the dashboard will walk you through setup.")
     if not args.no_open:
         threading.Timer(1.0, lambda: webbrowser.open(url)).start()
-    uvicorn.run(create_app(rt), host="127.0.0.1", port=args.port, log_level="warning")
+    # Don't wait on open browser polls when stopping: a restart after an update should take a second.
+    uvicorn.run(create_app(rt), host="127.0.0.1", port=args.port, log_level="warning", timeout_graceful_shutdown=2)
     return 0
 
 

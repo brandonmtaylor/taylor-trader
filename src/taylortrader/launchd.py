@@ -22,9 +22,15 @@ AGENTS = Path.home() / "Library" / "LaunchAgents"
 
 def plists(project: Path) -> dict[str, dict]:
     """Dry run, paper and live are settings in config.toml, not service arguments."""
-    uv = shutil.which("uv") or "/opt/homebrew/bin/uv"
     logs = project / "var" / "logs"
-    base = [uv, "run", "--project", str(project), "taylortrader", "--config", str(project / "config.toml")]
+    # Run the project's own entry point, not `uv run`: launchd stops a job with SIGTERM, and uv doesn't
+    # pass it on to Python, so every stop waited out launchd's 20 seconds and ended in a SIGKILL.
+    exe = project / ".venv" / "bin" / "taylortrader"
+    if exe.exists():
+        base = [str(exe), "--config", str(project / "config.toml")]
+    else:  # not installed yet: uv creates the environment on first run
+        uv = shutil.which("uv") or "/opt/homebrew/bin/uv"
+        base = [uv, "run", "--project", str(project), "taylortrader", "--config", str(project / "config.toml")]
     env = {"PATH": "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"}
     return {
         SERVICE: {
@@ -85,8 +91,8 @@ def _domain() -> str:
     return f"gui/{os.getuid()}"
 
 
-def _launchctl(*args: str) -> subprocess.CompletedProcess:
-    return subprocess.run(["launchctl", *args], capture_output=True, text=True, timeout=20, check=False)
+def _launchctl(*args: str, timeout: float = 20) -> subprocess.CompletedProcess:
+    return subprocess.run(["launchctl", *args], capture_output=True, text=True, timeout=timeout, check=False)
 
 
 def status(label: str = SERVICE, dest: Path = AGENTS) -> dict:
@@ -142,4 +148,4 @@ def stop_dashboard(dest: Path = AGENTS) -> None:
 
 
 def restart_dashboard() -> None:
-    _launchctl("kickstart", "-k", f"{_domain()}/{DASHBOARD}")
+    _launchctl("kickstart", "-k", f"{_domain()}/{DASHBOARD}", timeout=60)
