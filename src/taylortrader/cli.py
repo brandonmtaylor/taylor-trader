@@ -429,6 +429,27 @@ def cmd_dashboard(args) -> int:
     from taylortrader.web.api import create_app
     from taylortrader.web.runtime import Runtime
 
+    if args.background or args.restart or args.foreground_again:
+        from taylortrader import launchd
+
+        project = Path(__file__).resolve().parents[2]
+        if args.foreground_again:
+            launchd.stop_dashboard()
+            print("Stopped the background dashboard. Run `taylortrader` to start it in this terminal.")
+            return 0
+        if args.restart:
+            if not launchd.status(launchd.DASHBOARD)["loaded"]:
+                print("The dashboard isn't running in the background. Start it with `taylortrader dashboard "
+                      "--background`.", file=sys.stderr)
+                return 1
+            launchd.restart_dashboard()
+            print(f"Restarted the dashboard: http://127.0.0.1:{args.port}")
+            return 0
+        launchd.start_dashboard(project)
+        print(f"The dashboard now runs in the background and at every login: http://127.0.0.1:{args.port}\n"
+              "Restart it with `taylortrader dashboard --restart`; stop with `taylortrader dashboard --stop`.")
+        return 0
+
     setup_logging(level=logging.INFO)
     rt = Runtime(config_path=args.config)
     url = f"http://127.0.0.1:{args.port}"
@@ -513,6 +534,9 @@ def main(argv: list[str] | None = None) -> int:
     dash = sub.add_parser("dashboard", help="open the dashboard (the default with no command)")
     dash.add_argument("--port", type=int, default=8787)
     dash.add_argument("--no-open", action="store_true", help="don't open a browser tab")
+    dash.add_argument("--background", action="store_true", help="run it as a background service (macOS)")
+    dash.add_argument("--restart", action="store_true", help="restart the background dashboard (after an update)")
+    dash.add_argument("--stop", dest="foreground_again", action="store_true", help="stop the background dashboard")
     dash.set_defaults(fn=cmd_dashboard)
     sub.add_parser("mcp", help="MCP server over stdio (started by Claude, not by you)").set_defaults(fn=cmd_mcp)
 

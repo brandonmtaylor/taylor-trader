@@ -1,4 +1,8 @@
-"""Generate launchd agents for the service and the watchdog (macOS).
+"""Generate launchd agents for the service, the watchdog and the dashboard (macOS).
+
+The dashboard has its own agent so it's always at http://127.0.0.1:8787, comes back after a crash or
+login, and can be restarted after an update without anyone finding the terminal it ran in. Starting
+or stopping the bot from the dashboard never touches the dashboard's own agent.
 
 The plists contain paths only, never secrets: the service reads credentials from the Keychain.
 """
@@ -12,6 +16,7 @@ from pathlib import Path
 
 SERVICE = "com.taylortrader.service"
 WATCHDOG = "com.taylortrader.watchdog"
+DASHBOARD = "com.taylortrader.dashboard"
 AGENTS = Path.home() / "Library" / "LaunchAgents"
 
 
@@ -41,6 +46,17 @@ def plists(project: Path) -> dict[str, dict]:
             "StartInterval": 600,       # every 10 minutes
             "StandardOutPath": str(logs / "watchdog.out.log"),
             "StandardErrorPath": str(logs / "watchdog.err.log"),
+        },
+        DASHBOARD: {
+            "Label": DASHBOARD,
+            "ProgramArguments": [*base, "dashboard", "--no-open"],
+            "WorkingDirectory": str(project),
+            "EnvironmentVariables": env,
+            "RunAtLoad": True,
+            "KeepAlive": True,
+            "ThrottleInterval": 30,
+            "StandardOutPath": str(logs / "dashboard.out.log"),
+            "StandardErrorPath": str(logs / "dashboard.err.log"),
         },
     }
 
@@ -109,3 +125,21 @@ def stop(dest: Path = AGENTS) -> None:
 
 def restart() -> None:
     _launchctl("kickstart", "-k", f"{_domain()}/{SERVICE}")
+
+
+def start_dashboard(project: Path, dest: Path = AGENTS) -> None:
+    """Run the dashboard in the background from now on (and at every login)."""
+    write_plists(project, dest)
+    if not status(DASHBOARD, dest)["loaded"]:
+        r = _launchctl("bootstrap", _domain(), str(dest / f"{DASHBOARD}.plist"))
+        if r.returncode != 0:
+            raise RuntimeError(f"launchctl couldn't start the dashboard: {r.stderr.strip() or r.returncode}")
+
+
+def stop_dashboard(dest: Path = AGENTS) -> None:
+    if status(DASHBOARD, dest)["loaded"]:
+        _launchctl("bootout", f"{_domain()}/{DASHBOARD}")
+
+
+def restart_dashboard() -> None:
+    _launchctl("kickstart", "-k", f"{_domain()}/{DASHBOARD}")
