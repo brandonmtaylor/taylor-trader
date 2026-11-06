@@ -174,6 +174,10 @@ def luck_test(winner: dict, frames: dict[str, pd.DataFrame], holdout: float, see
 
 def run_search(frames: dict[str, pd.DataFrame], grid: list[Candidate], holdout: float = 0.3, seeds: int = 100,
                slippage_bps: float = 5.0, log_path: Path | None = None, on_progress=None) -> dict:
+    # Same window for every symbol (one listed later than the others would otherwise get its own,
+    # later, split date), so "the holdout" is one calendar period for all of them.
+    common = max(df.index[0] for df in frames.values())
+    frames = {s: df[df.index >= common] for s, df in frames.items()}
     rows = []
     for k, c in enumerate(grid):
         rows.append(evaluate(c, frames, "search", holdout, slippage_bps))

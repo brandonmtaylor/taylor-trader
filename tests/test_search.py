@@ -81,3 +81,11 @@ def test_verdicts(excess, beat, word):
 def test_default_grid_is_small_and_fixed():
     g = search.default_grid()
     assert 20 <= len(g) <= 40 and len({c.label for c in g}) == len(g)
+
+
+def test_symbols_listed_later_share_the_same_holdout_dates(tmp_path):
+    early, late = walk(n=1500, seed=6), walk(n=1500, seed=7).iloc[400:]
+    grid = [search.Candidate("rule", {"buy_when": "rsi < 45", "sell_when": "rsi > 55"}, 8.0)]
+    rep = search.run_search({"OLD": early, "NEW": late}, grid, holdout=0.3, seeds=3)
+    s_new = search.split_at(late, 0.3)
+    assert rep["periods"]["holdout"][0] == str(late.index[s_new].date())
