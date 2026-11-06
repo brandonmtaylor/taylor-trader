@@ -1,7 +1,8 @@
 import { useState } from "react";
-import type { Account, AIDecision, AIGrades as Grades, ChartPeriod, EventRow, History, OrderRow, Performance, PositionRow, Results, Status, TradeChartData } from "../api";
+import type { Account, AIDecision, AIGrades as Grades, ChartPeriod, EventRow, History, InvestResp, OrderRow, Performance, PositionRow, Results, Status, TradeChartData } from "../api";
 import { AIGrades } from "../components/AIGrades";
 import { EquityChart } from "../components/EquityChart";
+import { InvestCard } from "../components/InvestCard";
 import { AIDecisions, Events, Orders, PastResults, Positions, ResultsPanel, Strategies, Vitals } from "../components/Panels";
 import { SellDialog } from "../components/Sell";
 import { TradeChart } from "../components/TradeChart";
@@ -17,6 +18,7 @@ export function Overview({ status, onStatus }: { status: Status | null; onStatus
   const history = usePoll<History>("/api/history", 3_600_000);
   const ai = usePoll<AIDecision[]>("/api/ai/decisions?limit=30", 30_000);
   const grades = usePoll<Grades>("/api/ai/grades", 600_000);
+  const invest = usePoll<InvestResp>("/api/invest", 60_000);
   const [chartSymbol, setChartSymbol] = useState("");
   const [chartPeriod, setChartPeriod] = useState<ChartPeriod>("1M");
   const chart = usePoll<TradeChartData>(`/api/chart?symbol=${encodeURIComponent(chartSymbol)}&period=${chartPeriod}`, 60_000);
@@ -47,6 +49,7 @@ export function Overview({ status, onStatus }: { status: Status | null; onStatus
         <Orders orders={orders.data} error={orders.error} />
       </div>
       <aside className="col col--side">
+        <InvestCard data={invest.data} />
         <AIGrades grades={grades.data} error={grades.error} />
         <AIDecisions rows={ai.data} error={ai.error} />
         <Events events={events.data} />
