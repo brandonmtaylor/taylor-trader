@@ -89,6 +89,30 @@ stop, alerts reach my phone, and paper results roughly match the backtest for th
 
 ### M3: Live, small
 - Small amount of money, tight limits; raise them only as results earn it
+- Decide position sizing first. On paper, each strategy gets 50% of the account with a 12% stop, so
+  one stopped trade loses ~6% of the account: double the 3% daily loss limit, which therefore blocks
+  new buys every day a stop fires (first seen 2026-11-05: VRT stopped out, two rebuys blocked). The
+  usual shape is ~1-2% of the account at risk per trade and a 3-5% daily limit, e.g. 25% allocation
+  with an 8% stop. Pick one: smaller positions/tighter stops, a higher daily limit, or keep "a stop
+  fired, no more buying today" on purpose
+
+### Long-term investing (planned; slot TBD)
+For people who want a diversified portfolio built up over time, not trading: the same safety and
+dashboard, with no strategies, signals or stop-losses involved.
+- An **invest plan**: target weights (e.g. a few broad ETFs), and how to get there: invest $X every
+  week/month until a total or end date (dollar-cost averaging), or all at once
+- Fractional shares (Alpaca notional orders), so small amounts still match the weights
+- **Rebalancing**: buy what's under its weight with new money first; sell only when something drifts
+  past a band (e.g. 5 points), checked monthly or quarterly. Fewer sells, fewer taxable events
+- Example portfolios to start from (labeled examples, not advice); the user picks and edits weights
+- Guardrails need an investing profile: no stop-loss on plan holdings (a stop fights buy-and-hold),
+  scheduled buys not blocked by the daily loss limit (buying dips is the point), kill switch and
+  max-order-size still apply, and the unmanaged-position alert knows plan holdings are managed
+- Can share an account with trading strategies: the plan gets its own slice, and strategy allocation
+  is a share of the trading slice only
+- Dashboard: progress toward the target, current vs. target weights, contributions vs. growth, and
+  next scheduled buy. The bot can't pull money from a bank; it invests cash already in the account
+- Broader audience for the open-source release; the blog can show both modes
 
 ### M4: MCP server and open-source release
 - ✅ Local MCP server (`taylortrader mcp`, stdio): status, account, results, orders, log, AI decisions,
