@@ -252,8 +252,8 @@ function signedOut(res: Response) {
 
 export interface Session { wifi: boolean; here: boolean; signed_in: boolean }
 
-export async function get<T>(path: string): Promise<T> {
-  const res = await fetch(path, { headers: { Accept: "application/json" } });
+export async function get<T>(path: string, signal?: AbortSignal): Promise<T> {
+  const res = await fetch(path, { headers: { Accept: "application/json" }, signal });
   signedOut(res);
   if (!res.ok) {
     let detail = `${res.status} ${res.statusText}`;

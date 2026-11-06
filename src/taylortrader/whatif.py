@@ -50,7 +50,7 @@ def simulate(prices: dict[str, pd.DataFrame], plan: InvestConfig, start: date) -
     put_in = 0.0
     done: set[str] = set()
     fund_units = 0.0     # "shares" of the plan, for measuring drops without contributions in the way
-    peak_nav, worst = 0.0, 0.0
+    peak_nav, worst = 1.0, 0.0  # every plan starts at a NAV of 1.0, so a drop right after the first buy counts
     points = []
     for d, row in closes.iterrows():
         value = sum(units[s] * row[s] for s in weights)

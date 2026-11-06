@@ -8,8 +8,9 @@ will look great by luck. So:
    doesn't grow when nothing passes, and every result is reported, not just the winner.
 3. The winner is tested once on the newest part (the holdout). That's the number to believe; its
    search-period number is optimistic because it was picked as the best of many.
-4. Luck test: on the holdout, random entries with the winner's trade frequency, holding time and
-   stop are run many times. The winner should beat most of them, or its edge could be luck.
+4. Luck test: on the holdout, random entries with the winner's holdout trade frequency, time in the
+   market, holding time and stop are run many times. The winner should beat most of them, or its
+   edge could be luck.
 5. Each look at a holdout is logged. Rerunning the search after looking makes the holdout less clean,
    and the report says so.
 
@@ -120,7 +121,7 @@ def evaluate(c: Candidate, frames: dict[str, pd.DataFrame], window: str, holdout
            "max_dd": statistics.mean(p["max_dd"] for p in per.values()) if n else None,
            "buy_hold_max_dd": statistics.mean(p["buy_hold_max_dd"] for p in per.values()) if n else None,
            "exposure": statistics.mean(p["exposure"] for p in per.values()) if n else None,
-           "median_bars_held": int(statistics.median(holds)) if holds else None}
+           "median_bars_held": int(statistics.median(holds)) if holds else None, "holds": sorted(holds)}
     total_bars = sum(max(0, (split_at(df, holdout) if window == "search" else len(df) - split_at(df, holdout)))
                      for df in frames.values())
     out["trades_per_bar"] = out["trades"] / total_bars if total_bars else 0.0
@@ -128,13 +129,15 @@ def evaluate(c: Candidate, frames: dict[str, pd.DataFrame], window: str, holdout
 
 
 def _bars_held(df: pd.DataFrame, t) -> int:
-    return max(1, int(((df.index >= t.entry_time) & (df.index <= t.exit_time)).sum()))
+    """Bars in the market. The exit bar doesn't count: a sell fills at its open (or a stop during it),
+    so the position isn't held through it. This matches how the backtest counts exposure."""
+    return max(1, int(((df.index >= t.entry_time) & (df.index < t.exit_time)).sum()))
 
 
 # --- the luck test -------------------------------------------------------------------------------------
 
 class RandomEntry(Strategy):
-    """Buys at random (a set chance per bar) and sells after a set number of bars: no skill at all."""
+    """Buys at random (a set chance per flat bar) and sells after a hold drawn from `holds`: no skill at all."""
     name = "random"
     description = "random entries, for the luck test"
     backtestable = True
@@ -142,7 +145,7 @@ class RandomEntry(Strategy):
     @dataclass(frozen=True)
     class Params:
         chance: float = 0.01
-        hold_bars: int = 7
+        holds: tuple[int, ...] = (7,)
         seed: int = 0
         warm: int = 35
 
@@ -150,6 +153,7 @@ class RandomEntry(Strategy):
         super().__init__(params)
         self._rng = np.random.default_rng(self.p.seed)
         self._held = 0
+        self._hold = self.p.holds[0]
 
     @property
     def warmup(self) -> int:
@@ -158,26 +162,34 @@ class RandomEntry(Strategy):
     def entry(self, b: Bars, i: int) -> Signal:
         if self._rng.random() < self.p.chance:
             self._held = 0
+            self._hold = int(self._rng.choice(self.p.holds))
             return Signal(True, "random")
         return NO
 
     def exit(self, b: Bars, i: int, entry_price: float) -> Signal:
         self._held += 1
-        return Signal(True, "random") if self._held >= self.p.hold_bars else NO
+        return Signal(True, "random") if self._held >= self._hold else NO
 
 
 def luck_test(winner: dict, frames: dict[str, pd.DataFrame], holdout: float, seeds: int,
               slippage_bps: float = 5.0) -> list[float]:
-    """Average excess over buy-and-hold on the holdout, for `seeds` random-entry runs shaped like the winner."""
+    """Average excess over buy-and-hold on the holdout, for `seeds` random-entry runs shaped like the winner.
+    `winner` is an evaluate() row: its trades per bar, exposure and holds set the shape."""
     c = winner["candidate"]
     warm = get_strategy(c["strategy"], c["params"]).warmup
-    chance = max(winner["trades_per_bar"], 1e-4)
-    hold = max(1, winner["median_bars_held"] or 7)
+    # Random entries can only fire on bars spent in cash, so the chance is per flat bar. Spread over
+    # every bar, random runs would trade less and sit in cash more than the winner, and in a rising
+    # market the winner would "beat" them just by being invested longer.
+    flat = max(1 - (winner.get("exposure") or 0) / 100, 0.01)
+    chance = min(1.0, max(winner["trades_per_bar"] / flat, 1e-4))
+    # Holds are drawn from the winner's own, not fixed at its median: a few long holds usually carry
+    # most of its time in the market, and a fixed median would leave random runs well short of it.
+    holds = tuple(winner["holds"])
     results = []
     for seed in range(seeds):
         ex = []
         for k, (_sym, df) in enumerate(frames.items()):
-            strat = RandomEntry({"chance": chance, "hold_bars": hold, "seed": seed * 1000 + k, "warm": warm})
+            strat = RandomEntry({"chance": chance, "holds": holds, "seed": seed * 1000 + k, "warm": warm})
             r = _run(df, strat, c["stop_pct"], split_at(df, holdout), len(df), slippage_bps)
             if r is not None:
                 ex.append(r.total_return_pct - r.buy_hold_return_pct)
@@ -222,7 +234,8 @@ def run_search(frames: dict[str, pd.DataFrame], grid: list[Candidate], holdout: 
     report["holdout"] = held
     _log_look(log_path, look_key, winner["label"], held["excess"])
 
-    luck = luck_test(winner, frames, holdout, seeds, slippage_bps)
+    # Shaped like the winner on the holdout, since that's the run the random ones are compared with.
+    luck = luck_test(held if held["trades"] else winner, frames, holdout, seeds, slippage_bps)
     beat = (sum(x < held["excess"] for x in luck) / len(luck) * 100) if luck and held["excess"] is not None else None
     report["luck"] = {"runs": len(luck), "median": statistics.median(luck) if luck else None,
                       "p90": float(np.percentile(luck, 90)) if luck else None, "beat_pct": beat}
@@ -237,6 +250,8 @@ def verdict(held: dict, beat: float | None) -> str:
     if ex > 0 and beat is not None and beat >= PASS_PERCENTILE:
         return (f"PASSED: beat buy-and-hold on data it never saw ({ex:+.2f} pts) and beat {beat:.0f}% of random "
                 "entries. Worth running on paper, not proof.")
+    if ex > 0 and beat is None:
+        return f"NOT PROVEN: beat buy-and-hold on the holdout ({ex:+.2f} pts), but no luck test was run."
     if ex > 0:
         return (f"NOT PROVEN: beat buy-and-hold on the holdout ({ex:+.2f} pts), but only {beat:.0f}% of random "
                 f"entries did worse (needs {PASS_PERCENTILE}%). Could be luck.")

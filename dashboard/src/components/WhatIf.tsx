@@ -1,13 +1,14 @@
-import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { useId, useMemo, useState } from "react";
 import type { InvestEvery, Point, WhatIfResp } from "../api";
 import { money0, pct } from "../format";
+import { useChartWidth } from "../useChartWidth";
 import { usePoll } from "../usePoll";
 import { niceTicks } from "./EquityChart";
 
 const EVERY_WORD: Record<InvestEvery, string> = { week: "every week", "2weeks": "every 2 weeks", month: "every month", once: "once" };
 const M = { top: 14, right: 72, bottom: 24, left: 56 };
 const H = 230;
-const monthYear = (t: number) => new Date(t * 1000).toLocaleDateString(undefined, { month: "short", year: "numeric" });
+const monthYear = (t: number) => new Date(t * 1000).toLocaleDateString(undefined, { month: "short", year: "numeric", timeZone: "UTC" });
 
 /** Your plan's amount and schedule, run on the past: your mix and each ready-made one. */
 export function WhatIf() {
@@ -87,16 +88,9 @@ export function WhatIf() {
 }
 
 function WorthChart({ value, putIn, name }: { value: Point[]; putIn: Point[]; name: string }) {
-  const wrap = useRef<HTMLDivElement>(null);
-  const [w, setW] = useState(640);
+  const { wrap, w } = useChartWidth();
   const [hover, setHover] = useState<number | null>(null);
   const titleId = useId();
-  useEffect(() => {
-    if (!wrap.current) return;
-    const ro = new ResizeObserver(([e]) => setW(Math.max(280, e.contentRect.width)));
-    ro.observe(wrap.current);
-    return () => ro.disconnect();
-  }, []);
   const n = Math.min(value.length, putIn.length);
   const maxV = useMemo(() => Math.max(...value.slice(0, n).map((p) => p.v), 1), [value, n]);
   const ticks = useMemo(() => niceTicks(0, maxV, 4).filter((t) => t >= 0), [maxV]);

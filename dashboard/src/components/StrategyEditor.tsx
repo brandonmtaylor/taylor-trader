@@ -1,6 +1,7 @@
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { send, type BacktestResult, type CatalogItem, type Limits, type Point, type StrategyCfg } from "../api";
 import { day, pct } from "../format";
+import { useChartWidth } from "../useChartWidth";
 import { AIFields } from "./AIFields";
 import { Labeled, NoticeLine, NumberInput, Toggle, useAction } from "./forms";
 
@@ -212,16 +213,9 @@ const H = 190;
 
 /** Two lines indexed to 100, with legend, end labels and a crosshair tooltip. */
 export function CompareChart({ a, b, aLabel, bLabel }: { a: Point[]; b: Point[]; aLabel: string; bLabel: string }) {
-  const wrap = useRef<HTMLDivElement>(null);
-  const [w, setW] = useState(560);
+  const { wrap, w } = useChartWidth(560, 260);
   const [hover, setHover] = useState<number | null>(null);
   const titleId = useId();
-  useEffect(() => {
-    if (!wrap.current) return;
-    const ro = new ResizeObserver(([e]) => setW(Math.max(260, e.contentRect.width)));
-    ro.observe(wrap.current);
-    return () => ro.disconnect();
-  }, []);
   const n = Math.min(a.length, b.length);
   const { y0, y1 } = useMemo(() => {
     const vals = [...a.slice(0, n), ...b.slice(0, n)].map((p) => p.v);

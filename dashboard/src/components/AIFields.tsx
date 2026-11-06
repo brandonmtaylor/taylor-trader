@@ -1,7 +1,8 @@
 import type { StrategyCfg } from "../api";
 import { Labeled, NumberInput, Toggle } from "./forms";
 
-const BARS_PER_DAY: Record<string, number> = { "1Min": 390, "5Min": 78, "15Min": 26, "1Hour": 7, "1Day": 1 };
+// Hourly is 6, not 7: the bar stamped 9:00 starts before the open and is dropped (see grading.horizon_bars).
+const BARS_PER_DAY: Record<string, number> = { "1Min": 390, "5Min": 78, "15Min": 26, "1Hour": 6, "1Day": 1 };
 const NAMES = "close, open, high, low, volume, rsi, ma_20, ma_200, macd, macd_signal, macd_diff, chaikin";
 
 /** The AI strategy's settings: plain-English instructions plus optional rules that gate each model call. */
@@ -13,7 +14,7 @@ export function AIFields({ value, onChange, dailyLimit, defaults }: {
   // Show the strategy's real defaults (e.g. the starter instructions) until they're changed.
   const get = <T,>(k: string, d: T): T => (p[k] ?? defaults[k] ?? d) as T;
   const set = (k: string, v: string | number | boolean) => onChange({ ...value, params: { ...p, [k]: v } });
-  const perDay = (BARS_PER_DAY[value.timeframe] ?? 7) * Math.max(1, value.symbols.length);
+  const perDay = (BARS_PER_DAY[value.timeframe] ?? 6) * Math.max(1, value.symbols.length);
   const gated = Boolean(String(get("entry_when", "")).trim());
 
   return (

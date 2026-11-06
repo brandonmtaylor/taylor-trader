@@ -38,7 +38,7 @@ export function Overview({ status, onStatus }: { status: Status | null; onStatus
 
   return (
     <main className="layout">
-      <Vitals account={account.data} status={status} />
+      <Vitals account={account.data} status={status} error={account.error} />
       <div className="col col--main">
         <EquityChart perf={perf.data} period={period} onPeriod={setPeriod} error={perf.error} />
         <ResultsPanel results={results.data} perf={perf.data} error={results.error} />
@@ -49,12 +49,12 @@ export function Overview({ status, onStatus }: { status: Status | null; onStatus
         <Orders orders={orders.data} error={orders.error} />
       </div>
       <aside className="col col--side">
-        <InvestCard data={invest.data} />
+        <InvestCard data={invest.data} error={invest.error} />
         <AIGrades grades={grades.data} error={grades.error} />
         <AIDecisions rows={ai.data} error={ai.error} />
-        <Events events={events.data} />
+        <Events events={events.data} error={events.error} />
         <Strategies status={status} />
-        <PastResults history={history.data} />
+        <PastResults history={history.data} error={history.error} />
       </aside>
       <SellDialog
         open={selling !== undefined}

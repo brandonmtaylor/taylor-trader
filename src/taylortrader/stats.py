@@ -12,8 +12,16 @@ from dataclasses import asdict, dataclass
 from datetime import date, datetime
 from zoneinfo import ZoneInfo
 
+import pandas as pd
+
 NY = ZoneInfo("America/New_York")
 EPS = 1e-9
+
+
+def utc_ts(v) -> pd.Timestamp:
+    """Any timestamp as UTC; one with no zone is taken to be UTC already."""
+    t = pd.Timestamp(v)
+    return t.tz_localize("UTC") if t.tzinfo is None else t.tz_convert("UTC")
 
 
 @dataclass(frozen=True)
@@ -121,10 +129,11 @@ def results(fills: list[Fill], strategy_of: dict[str, str], now: datetime) -> di
     by_strategy: dict[str, list[Trade]] = defaultdict(list)
     for t in bot:
         by_strategy[t.strategy].append(t)
+    summaries = {k: summarize(v, today) for k, v in sorted(by_strategy.items())}
     return {
         "bot": summarize(bot, today),
-        "by_strategy": [{"strategy": k, **{x: summarize(v, today)[x] for x in ("trades", "wins", "win_rate", "realized")}}
-                        for k, v in sorted(by_strategy.items())],
+        "by_strategy": [{"strategy": k, **{x: s[x] for x in ("trades", "wins", "win_rate", "realized")}}
+                        for k, s in summaries.items()],
         "recent": [t.as_dict() for t in reversed(bot[-10:])],
         "other": {"trades": len(other), "realized": sum(t.pnl for t in other)},
     }

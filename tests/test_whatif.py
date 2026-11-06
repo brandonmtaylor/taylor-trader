@@ -36,6 +36,12 @@ def test_a_crash_shows_even_while_new_money_hides_it():
     assert r["lump"]["value"] == pytest.approx(r["put_in"], rel=0.01)   # all in at 100, ends at 100
 
 
+def test_a_drop_right_after_the_first_buy_counts():
+    prices = [100.0, 80.0] + list(np.linspace(80, 130, 258))  # falls the day after the first buy, never again
+    r = whatif.simulate({"A": daily(prices)}, plan([{"symbol": "A", "weight": 100.0}]), START)
+    assert r["worst_drop_pct"] == pytest.approx(-20, abs=0.5)
+
+
 def test_all_at_once_is_one_buy_and_series_are_monthly():
     r = whatif.simulate({"A": daily(np.linspace(100, 120, 300))}, plan([{"symbol": "A", "weight": 100.0}],
                                                                       amount=5000, every="once"), START)

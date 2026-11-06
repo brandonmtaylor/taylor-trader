@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from taylortrader import search
+from taylortrader import backtest, search
 from taylortrader.strategies import get_strategy
 
 
@@ -17,8 +17,6 @@ def walk(n=1500, seed=0, drift=0.0002):
 
 def test_rule_strategy_buys_and_sells_on_its_rules():
     s = get_strategy("rule", {"buy_when": "rsi < 40", "sell_when": "rsi > 60"})
-    from taylortrader import backtest
-
     r = backtest.run(walk(), s, stop_loss_pct=12)
     assert r.trades and all("rule: rsi < 40" in t.entry_reason for t in r.trades)
     assert get_strategy("rule", {"buy_when": "close > ma_200", "sell_when": ""}).warmup == 200
@@ -47,10 +45,49 @@ def test_the_search_never_trades_in_the_holdout_and_the_holdout_test_only_trades
 def test_random_entries_are_repeatable_and_have_no_skill():
     df = walk(seed=3)
     a = search.luck_test({"candidate": {"strategy": "rsi_14", "params": {}, "stop_pct": 12.0},
-                          "trades_per_bar": 0.01, "median_bars_held": 7}, {"A": df}, 0.3, seeds=5)
+                          "trades_per_bar": 0.01, "holds": [7]}, {"A": df}, 0.3, seeds=5)
     b = search.luck_test({"candidate": {"strategy": "rsi_14", "params": {}, "stop_pct": 12.0},
-                          "trades_per_bar": 0.01, "median_bars_held": 7}, {"A": df}, 0.3, seeds=5)
+                          "trades_per_bar": 0.01, "holds": [7]}, {"A": df}, 0.3, seeds=5)
     assert a == b and len(a) == 5 and len(set(a)) > 1
+
+
+def test_held_bars_count_like_exposure_so_random_holds_match_the_winner():
+    df = walk(seed=3)
+    r = backtest.run(df, search.RandomEntry({"chance": 0.05, "holds": (9,)}), stop_loss_pct=90)
+    closed = [t for t in r.trades if t.exit_reason == "random"]
+    assert closed and {search._bars_held(df, t) for t in closed} == {9}
+
+
+@pytest.mark.parametrize("candidate", [
+    search.Candidate("ma_20", {}, 12.0),     # many short holds and a few long ones: mean far above median
+    search.Candidate("rsi_14", {}, 12.0),    # few long holds
+    search.Candidate("rule", {"buy_when": "rsi < 50 and macd_diff > 0", "sell_when": "rsi > 68 or macd_diff < 0"}, 8.0),
+])
+def test_random_entries_match_the_winners_time_in_the_market_and_trade_count(monkeypatch, candidate):
+    frames = {"A": walk(n=3000, seed=11), "B": walk(n=3000, seed=12)}
+    held = search.evaluate(candidate, frames, "holdout", 0.3)
+    assert held["exposure"] > 20  # enough time in the market for the test to mean something
+    exposures, trades = [], []
+    real_run = search._run
+
+    def spy(*args, **kw):
+        r = real_run(*args, **kw)
+        exposures.append(r.exposure_pct)
+        trades.append(len(r.trades))
+        return r
+
+    monkeypatch.setattr(search, "_run", spy)
+    search.luck_test(held, frames, 0.3, seeds=30)
+    assert np.mean(exposures) == pytest.approx(held["exposure"], abs=5)
+    assert np.mean(trades) * len(frames) == pytest.approx(held["trades"], rel=0.25)
+
+
+def test_the_luck_test_copies_the_winners_shape_on_the_holdout(monkeypatch):
+    seen = []
+    monkeypatch.setattr(search, "luck_test", lambda shape, *a: seen.append(shape) or [])
+    grid = [search.Candidate("rsi_14", {}, 12.0)]
+    rep = search.run_search({"A": walk(seed=4), "B": walk(seed=5)}, grid, seeds=1)
+    assert seen == [rep["holdout"]]
 
 
 def test_full_search_reports_everything_and_logs_each_holdout_look(tmp_path):
@@ -76,6 +113,11 @@ def test_full_search_reports_everything_and_logs_each_holdout_look(tmp_path):
 def test_verdicts(excess, beat, word):
     assert search.verdict({"excess": excess, "trades": 5}, beat).startswith(word)
     assert search.verdict({"excess": None, "trades": 0}, None).startswith("INCONCLUSIVE")
+
+
+def test_a_winner_with_no_luck_test_is_not_proven():  # --seeds 0
+    assert search.verdict({"excess": 3.0, "trades": 5}, None) == (
+        "NOT PROVEN: beat buy-and-hold on the holdout (+3.00 pts), but no luck test was run.")
 
 
 def test_default_grid_is_small_and_fixed():

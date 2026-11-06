@@ -41,7 +41,8 @@ SIP_DELAY = timedelta(minutes=16)
 
 
 def regular_hours(df: pd.DataFrame) -> pd.DataFrame:
-    """Keep 9:30-16:00 New York time bars (intraday timeframes only)."""
+    """Keep bars starting 9:30-16:00 New York time (intraday timeframes only). Hourly bars start on
+    the hour, so the 9:00 bar goes too: a regular day is six hourly bars, and 9:30-10:00 is in none."""
     et = df.index.tz_convert("America/New_York")
     minutes = et.hour * 60 + et.minute
     return df[(minutes >= 9 * 60 + 30) & (minutes < 16 * 60)]

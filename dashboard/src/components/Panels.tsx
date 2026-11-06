@@ -1,5 +1,5 @@
 import type { Account, AIDecision, EventRow, History, OrderRow, Performance, PositionRow, Results, Status } from "../api";
-import { money, money0, pct, qty, shortTime } from "../format";
+import { money, money0, pct, qty, shortTime, STATUS_TAG } from "../format";
 
 const PERIOD_WORDS: Record<Performance["period"], string> = { "1M": "past month", "3M": "past 3 months", "1A": "past year" };
 
@@ -103,11 +103,12 @@ export function ResultsPanel({ results, perf, error }: { results: Results | null
   );
 }
 
-export function Vitals({ account, status }: { account: Account | null; status: Status | null }) {
+export function Vitals({ account, status, error }: { account: Account | null; status: Status | null; error: string | null }) {
   const maxExposure = status?.limits.max_total_exposure_pct;
   const day = account?.day_pnl_pct ?? null;
   return (
     <section className="vitals" aria-label="Account">
+      {!account && error && <p className="empty">Can't load the account: {error}</p>}
       <div className="vital vital--lead">
         <span className="vital__label">Equity</span>
         <span className="vital__value">{money(account?.equity)}</span>
@@ -256,11 +257,6 @@ export function Positions({ account, error, onSell, notice, marketOpen }: {
   );
 }
 
-const STATUS_TAG: Record<string, string> = {
-  filled: "good", submitted: "info", "dry-run": "info", blocked: "warn", failed: "crit",
-  canceled: "warn", expired: "warn", rejected: "crit",
-};
-
 export function Orders({ orders, error }: { orders: OrderRow[] | null; error: string | null }) {
   return (
     <section className="panel" aria-labelledby="orders-title">
@@ -294,7 +290,7 @@ export function Orders({ orders, error }: { orders: OrderRow[] | null; error: st
   );
 }
 
-export function Events({ events }: { events: EventRow[] | null }) {
+export function Events({ events, error }: { events: EventRow[] | null; error: string | null }) {
   const shown = (events ?? []).filter((e) => e.kind !== "summary").slice(0, 12);
   return (
     <section className="panel" aria-labelledby="events-title">
@@ -304,7 +300,8 @@ export function Events({ events }: { events: EventRow[] | null }) {
           <p className="panel__sub">Starts, stops, errors, and anything the service fixed on its own.</p>
         </div>
       </div>
-      {shown.length === 0 && <p className="empty">Nothing logged yet.</p>}
+      {error && <p className="empty">Can't load the service log: {error}</p>}
+      {shown.length === 0 && !error && <p className="empty">Nothing logged yet.</p>}
       <ol className="log">
         {shown.map((e) => (
           <li key={e.id} className={`log__row log__row--${e.level}`}>
@@ -364,7 +361,15 @@ export function Strategies({ status }: { status: Status | null }) {
   );
 }
 
-export function PastResults({ history }: { history: History | null }) {
+export function PastResults({ history, error }: { history: History | null; error: string | null }) {
+  if (!history && error) {
+    return (
+      <section className="panel" aria-labelledby="hist-title">
+        <h2 id="hist-title">The original bot</h2>
+        <p className="empty">Can't load past results: {error}</p>
+      </section>
+    );
+  }
   if (!history || history.closed_trades === 0) return null;
   const max = Math.max(...history.by_year.map((y) => Math.abs(y.profit)), 1);
   return (
@@ -407,20 +412,23 @@ export function PastResults({ history }: { history: History | null }) {
 const ACTION_TAG: Record<string, string> = { buy: "good", sell: "warn", hold: "info" };
 
 export function AIDecisions({ rows, error }: { rows: AIDecision[] | null; error: string | null }) {
-  if (!rows || rows.length === 0) return null;
-  const today = rows.filter((r) => new Date(r.ts).toDateString() === new Date().toDateString());
+  if (!rows?.length && !error) return null;
+  const list = rows ?? [];
+  const today = list.filter((r) => new Date(r.ts).toDateString() === new Date().toDateString());
   const calls = today.filter((r) => r.model && r.model !== "skipped").length;
   return (
     <section className="panel" aria-labelledby="ai-title">
       <div className="panel__head">
         <div>
           <h2 id="ai-title">AI decisions</h2>
-          <p className="panel__sub">What the model was asked and why it answered as it did. {calls} call{calls === 1 ? "" : "s"} today.</p>
+          <p className="panel__sub">
+            What the model was asked and why it answered as it did.{list.length > 0 && ` ${calls} call${calls === 1 ? "" : "s"} today.`}
+          </p>
         </div>
       </div>
       {error && <p className="empty">Can't load AI decisions: {error}</p>}
       <ol className="ai">
-        {rows.slice(0, 12).map((r) => (
+        {list.slice(0, 12).map((r) => (
           <li key={r.id} className="ai__row">
             <div className="ai__line">
               <time className="ledger__time" dateTime={r.ts}>{shortTime(r.ts)}</time>

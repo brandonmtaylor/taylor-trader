@@ -2,7 +2,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from taylortrader.stats import Fill, round_trips, summarize
+from taylortrader.stats import Fill, round_trips, summarize, utc_ts
 
 T = datetime(2026, 11, 2, 15, 0, tzinfo=UTC)
 
@@ -31,3 +31,8 @@ def test_fifo_pairing_partial_sells_and_streaks():
 def test_empty():
     s = summarize([], T.date())
     assert s["trades"] == 0 and s["win_rate"] is None and s["streak"] is None
+
+
+def test_timestamps_are_utc_with_or_without_a_zone():
+    assert utc_ts("2026-11-02 14:30") == utc_ts("2026-11-02 09:30-05:00")
+    assert str(utc_ts("2026-11-02 09:30-05:00").tz) == "UTC"

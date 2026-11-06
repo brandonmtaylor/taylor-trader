@@ -6,7 +6,7 @@ from itertools import pairwise
 import pandas as pd
 import pytest
 
-from taylortrader import indicators, replay
+from taylortrader import grading, indicators, replay
 from taylortrader.llm import Decision
 from taylortrader.strategies import get_strategy
 
@@ -42,6 +42,31 @@ def test_disguise_changes_prices_and_dates_but_not_the_chart():
         assert fake[col].dropna().values == pytest.approx(real[col].dropna().values * k)
 
 
+def test_disguise_keeps_the_new_york_clock_all_year():
+    days = pd.bdate_range("2025-01-01", "2025-12-31", tz="America/New_York") + pd.Timedelta(hours=10)
+    c = pd.Series(100.0, index=days.tz_convert("UTC"))
+    df = pd.DataFrame({"open": c, "high": c, "low": c, "close": c, "volume": 1e6})
+    fake = replay.disguise(df, random.Random(3))
+    assert str(fake.index.tz) == "UTC"
+    local = fake.index.tz_convert("America/New_York")
+    assert set(local.hour) == {10}
+    assert (local.day_of_week == days.day_of_week).all()
+
+
+def test_more_than_26_stocks_keep_getting_letters():
+    assert [replay._alias(n) for n in (0, 25, 26, 27, 51, 52, 701, 702)] == [
+        "Stock A", "Stock Z", "Stock AA", "Stock AB", "Stock AZ", "Stock BA", "Stock ZZ", "Stock AAA"]
+
+
+def test_replay_works_on_15_minute_bars():
+    bar = timedelta(minutes=15)
+    df = frame(n=400)
+    df.index = pd.date_range(T0, periods=400, freq="15min", tz="UTC")
+    qs, _ = replay.questions({"NVDA": df}, strategy(), bar=bar, gap=7, max_calls=500, seed=1)
+    assert qs and all(q.ts == df.index[q.i] + bar for q in qs)
+    assert max(q.i for q in qs) <= len(df) - 1 - 26  # a full day of 15-minute bars left to grade
+
+
 def test_questions_hide_the_ticker_follow_the_rule_and_leave_room_to_grade():
     frames = {"NVDA": frame(seed=1), "PLTR": frame(seed=2, base=170.24)}
     qs, qualified = replay.questions(frames, strategy(), bar=timedelta(hours=1), gap=7, max_calls=500, seed=1)
@@ -50,7 +75,7 @@ def test_questions_hide_the_ticker_follow_the_rule_and_leave_room_to_grade():
         assert "NVDA" not in q.prompt and "PLTR" not in q.prompt and "170.24" not in q.prompt
         assert q.alias in q.prompt and "2046" in q.prompt and "2026" not in q.prompt
         assert q.feats["rsi"] < 50
-        assert replay.WARMUP <= q.i <= len(frames[q.symbol]) - 1 - 7
+        assert replay.WARMUP <= q.i <= len(frames[q.symbol]) - 1 - grading.HORIZON_BARS
         assert q.ts == frames[q.symbol].index[q.i] + timedelta(hours=1)
     per = [q.i for q in qs if q.symbol == "NVDA"]
     assert all(b - a >= 7 for a, b in pairwise(per))

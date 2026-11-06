@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { get, SIGN_IN_EVENT, type Session, type Setup, type Status } from "./api";
+import { ErrorBoundary } from "./components/ErrorBoundary";
 import { Header } from "./components/Header";
 import { GuidePage } from "./pages/GuidePage";
 import { InvestPage } from "./pages/InvestPage";
@@ -9,7 +10,7 @@ import { SignInPage } from "./pages/SignInPage";
 import { SetupPage } from "./pages/SetupPage";
 import { StrategiesPage } from "./pages/StrategiesPage";
 import { useSettings } from "./settings";
-import { useNow, usePoll } from "./usePoll";
+import { usePoll } from "./usePoll";
 
 const ROUTES = ["/", "/strategies", "/invest", "/settings", "/setup", "/guide"] as const;
 type Route = (typeof ROUTES)[number];
@@ -53,7 +54,6 @@ export function App() {
 
 function Dashboard() {
   const route = useRoute();
-  const now = useNow(1000);
   const status = usePoll<Status>("/api/status", 5_000);
   const setupPoll = usePoll<Setup>("/api/setup", 20_000);
   // A change returns fresh setup state at once; use it until the next poll is newer.
@@ -84,14 +84,16 @@ function Dashboard() {
 
   return (
     <div className={`app app--${status.data?.mode ?? "paper"}`}>
-      <Header status={status.data} setup={setup} now={now} error={status.error} route={page}
+      <Header status={status.data} setup={setup} error={status.error} route={page}
         onStatus={onStatus} onSetup={onSetup} />
-      {page === "/" && <Overview status={status.data} onStatus={() => status.reload()} />}
-      {page === "/strategies" && <StrategiesPage store={store} />}
-      {page === "/invest" && <InvestPage />}
-      {page === "/settings" && <SettingsPage store={store} setup={setup} onSetup={onSetup} />}
-      {page === "/setup" && <SetupPage store={store} setup={setup} onSetup={onSetup} />}
-      {page === "/guide" && <GuidePage />}
+      <ErrorBoundary key={page}>
+        {page === "/" && <Overview status={status.data} onStatus={() => status.reload()} />}
+        {page === "/strategies" && <StrategiesPage store={store} />}
+        {page === "/invest" && <InvestPage />}
+        {page === "/settings" && <SettingsPage store={store} setup={setup} onSetup={onSetup} />}
+        {page === "/setup" && <SetupPage store={store} setup={setup} onSetup={onSetup} />}
+        {page === "/guide" && <GuidePage />}
+      </ErrorBoundary>
       <footer className="foot">
         Runs on this computer only. Not financial advice. TaylorTrader is software you run on your
         own account.

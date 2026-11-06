@@ -1,7 +1,7 @@
-import { useEffect, useId, useRef, useState } from "react";
+import { useId, useState } from "react";
 import { send, type PositionRow, type SellAllResult } from "../api";
 import { money } from "../format";
-import { NoticeLine, useAction } from "./forms";
+import { NoticeLine, useAction, useDialog } from "./forms";
 
 const PHRASE = "SELL ALL";
 
@@ -15,19 +15,11 @@ export function SellDialog({ open, target, positions, live, marketOpen, onClose,
   onClose: () => void;
   onDone: (message: string) => void;
 }) {
-  const ref = useRef<HTMLDialogElement>(null);
   const [typed, setTyped] = useState("");
   const act = useAction();
   const titleId = useId();
   const phraseId = useId();
-  useEffect(() => {
-    const d = ref.current;
-    if (!d) return;
-    if (open && !d.open) d.showModal();
-    if (!open && d.open) d.close();
-    if (open) { setTyped(""); act.setNotice(null); }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open]);
+  const ref = useDialog(open, () => { setTyped(""); act.setNotice(null); });
 
   const all = target === null;
   const total = all ? positions.reduce((s, p) => s + p.market_value, 0) : target.market_value;
