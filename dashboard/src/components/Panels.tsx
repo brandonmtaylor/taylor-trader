@@ -147,7 +147,9 @@ export function Positions({ account, error, onSell, notice, marketOpen }: {
   notice: string | null;
 }) {
   const rows = account?.positions ?? [];
-  const exposed = rows.filter((p) => !p.has_stop && !p.selling).length;
+  // Invest plan holdings are long-term and carry no stop on purpose.
+  const exposed = rows.filter((p) => !p.has_stop && !p.selling && !p.invest).length;
+  const held = rows.filter((p) => p.invest).length;
   const sellable = rows.filter((p) => !p.selling);
   const waiting = rows.length - sellable.length;
   return (
@@ -162,7 +164,7 @@ export function Positions({ account, error, onSell, notice, marketOpen }: {
                 ? `${exposed} of ${rows.length} without a stop-loss at Alpaca.`
                 : waiting === rows.length
                   ? `Everything is being sold${marketOpen === false ? " at the next open" : ""}.`
-                  : `Every position has a stop-loss at Alpaca.${
+                  : `Every ${held ? "trading " : ""}position has a stop-loss at Alpaca.${held ? " Invest plan holdings have none, on purpose." : ""}${
                     account?.stops_at_risk_usd != null
                       ? ` If every stop fired: ${signedMoney(account.stops_at_risk_usd)} (${pct(account.stops_at_risk_usd / account.equity * 100, true, 1)} of the account).`
                       : ""}`}
@@ -196,7 +198,9 @@ export function Positions({ account, error, onSell, notice, marketOpen }: {
                 <tr key={p.symbol} className={p.issues.length ? "row--issue" : ""}>
                   <td className="sym">{p.symbol}</td>
                   <td>
-                    {p.selling && !p.has_stop
+                    {p.invest && !p.has_stop
+                      ? <span className="muted" title="Held for the long term: a stop-loss would sell in a dip">Not used</span>
+                      : p.selling && !p.has_stop
                       ? <span className="muted">Not needed</span>
                       : p.has_stop && p.stop_price != null
                       ? (

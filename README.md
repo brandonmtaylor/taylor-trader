@@ -110,6 +110,27 @@ Set it up under Settings → AI model, then add an `ai` strategy with plain-Engl
 For UI work: `uv run taylortrader dashboard --no-open` plus `TAYLORTRADER_DEV=1` and `npm run dev`
 in `dashboard/` (Vite proxies `/api` to it).
 
+## Long-term investing
+
+Not everyone wants a trading bot. An **invest plan** puts a set amount into a fixed mix of funds
+on a schedule (say $200 a month into US stocks, international stocks and bonds) and holds it.
+
+- Each contribution goes to whatever is furthest under its target weight first, so new money keeps
+  the mix balanced without selling. Fractional shares, so any amount splits exactly.
+- No stop-losses and no daily loss limit for plan buys (holding through dips is the point). The
+  kill switch, plan-only symbols, no margin and a size cap still apply.
+- A month is never bought twice, even across restarts or crashes: each buy is journaled first and
+  carries an order id Alpaca won't accept twice.
+- It invests cash already in the account (the bot can't move money from your bank). Short on cash,
+  it invests what's there and tells you.
+- Start with `preview = true`: it runs on schedule and alerts what it would buy, placing nothing.
+- Trading strategies size from what's left after the plan, so a strategy's "50%" never spends
+  plan money.
+
+Set it up under `[invest]` in `config.toml` (see `config.example.toml`). Not financial advice; the
+example holdings are an example. The design and what's next (dashboard page, rebalancing by
+selling) are in [docs/proposals/investing.md](docs/proposals/investing.md).
+
 ## Talk to it from Claude (MCP)
 TaylorTrader includes an MCP server, so Claude Code or the Claude desktop app can check on the bot
 and adjust it: "how did the AI strategy do this week?", "move PLTR to macd_rsi", "backtest rsi_14

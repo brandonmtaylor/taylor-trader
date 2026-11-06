@@ -45,6 +45,22 @@ class Summary:
     problems: list[dict]          # journal events (error/warning)
     closed: dict | None = None    # stats.summarize()["today"], when available
     notes: list[str] = field(default_factory=list)
+    loss_limit_pct: float | None = None  # the daily loss guardrail, to say when it blocked buys today
+
+    @property
+    def loss_limit_hit(self) -> bool:
+        return self.loss_limit_pct is not None and self.day_pnl_pct <= -self.loss_limit_pct
+
+
+def buys_status(s: Summary) -> tuple[str, str]:
+    """(short, long) wording for whether the bot may open new positions."""
+    if s.kill_on:
+        return "Paused", "PAUSED (kill switch on)"
+    if s.loss_limit_hit:
+        return ("Blocked today",
+                (f"blocked today (down {abs(s.day_pnl_pct):.1f}%, daily limit {s.loss_limit_pct:g}%); allowed again "
+                "tomorrow"))
+    return "Allowed", "allowed"
 
 
 def qty_text(q: float | None) -> str:
@@ -91,7 +107,7 @@ def text(s: Summary) -> str:
     lines = [
         (f"[{s.mode}] Equity {_money(s.equity)} ({s.day_pnl_pct:+.2f}% today), cash {_money(s.cash)}, "
          f"invested {invested / s.equity * 100 if s.equity else 0:.0f}%"),
-        (f"New buys: {'PAUSED' if s.kill_on else 'allowed'}. Orders today: {len(s.orders)}. "
+        (f"New buys: {buys_status(s)[1]}. Orders today: {len(s.orders)}. "
          f"Problems today: {len(s.problems)}."),
     ]
     if s.closed and s.closed.get("trades"):
@@ -160,7 +176,7 @@ def html(s: Summary) -> str:
     tiles = [
         _stat("Cash", _money(s.cash)),
         _stat("Invested", f"{invested / s.equity * 100 if s.equity else 0:.0f}%"),
-        _stat("New buys", "Paused" if s.kill_on else "Allowed", WARN if s.kill_on else INK),
+        _stat("New buys", buys_status(s)[0], WARN if s.kill_on or s.loss_limit_hit else INK),
         _stat("Warnings", str(len(s.problems)), DOWN if s.problems else INK),
     ]
     if closed.get("trades"):

@@ -2,6 +2,8 @@
 
 Entries always carry a stop-loss leg held at Alpaca (OTO, or bracket when there is also a
 take-profit), with time-in-force GTC so the stop survives past today and survives this process dying.
+Invest plan buys are the exception: dollar-amount (fractional) market orders with no stop, which
+Alpaca only accepts as day orders.
 """
 
 from __future__ import annotations
@@ -205,6 +207,34 @@ class AlpacaBroker:
         )
         log.info("[%s] BUY %s x%d, stop %.2f (%s)", self.mode, intent.symbol, qty, stop.stop_price, intent.reason)
         return self._client.submit_order(req)
+
+    def submit_notional_buy(self, symbol: str, notional: float, client_order_id: str):
+        """An invest plan buy: $notional of symbol, fractional shares, no stop. Only reached through
+        InvestRunner, which runs the investing guardrails first. Alpaca rejects a repeated
+        client_order_id, which is what makes a plan buy impossible to place twice."""
+        amount = math.floor(notional * 100) / 100  # Alpaca takes whole cents
+        if amount < 1:
+            raise BrokerError(f"{symbol}: ${notional:.2f} is under the $1 minimum")
+        req = MarketOrderRequest(symbol=symbol, notional=amount, side=OrderSide.BUY,
+                                 time_in_force=TimeInForce.DAY, client_order_id=client_order_id)
+        log.info("[%s] INVEST BUY %s $%.2f (%s)", self.mode, symbol, amount, client_order_id)
+        return self._client.submit_order(req)
+
+    def order_by_client_id(self, client_order_id: str):
+        """The order placed with this client order id, or None if there isn't one."""
+        from alpaca.common.exceptions import APIError
+
+        try:
+            return self._client.get_order_by_client_id(client_order_id)
+        except APIError as e:
+            if getattr(e, "status_code", None) == 404 or "not found" in str(e).lower():
+                return None
+            raise
+
+    def asset_status(self, symbol: str) -> tuple[bool, bool]:
+        """(tradable, fractionable) at Alpaca."""
+        a = self._client.get_asset(symbol)
+        return bool(a.tradable), bool(a.fractionable)
 
     def place_stop(self, symbol: str, qty: float, stop_price: float):
         """Standalone GTC stop for an existing long position (used to repair missing protection)."""

@@ -30,6 +30,20 @@ CREATE TABLE IF NOT EXISTS orders (
     fill_ts TEXT,
     detail TEXT
 );
+CREATE TABLE IF NOT EXISTS invest_orders (
+    id INTEGER PRIMARY KEY,
+    ts TEXT NOT NULL,
+    period TEXT NOT NULL,            -- "2026-11", "week-2026-11-02", "once", ...
+    mode TEXT NOT NULL,              -- preview | paper | live
+    symbol TEXT NOT NULL,
+    notional REAL NOT NULL,          -- dollars
+    planned_total REAL,              -- the contribution this was part of
+    status TEXT NOT NULL,            -- planned | preview | submitted | blocked | failed
+    attempts INTEGER NOT NULL DEFAULT 0,
+    order_id INTEGER,                -- orders.id once sent
+    detail TEXT,
+    UNIQUE (period, mode, symbol)    -- one buy per symbol per period: never twice
+);
 CREATE TABLE IF NOT EXISTS events (
     id INTEGER PRIMARY KEY,
     ts TEXT NOT NULL,
@@ -123,6 +137,41 @@ class Journal:
 
     def recent_orders(self, limit: int = 50) -> list[sqlite3.Row]:
         return list(self.db.execute("SELECT * FROM orders ORDER BY id DESC LIMIT ?", (limit,)))
+
+    # --- invest plan ----------------------------------------------------------------------------
+
+    def plan_invest(self, period: str, mode: str, alloc: dict[str, float], planned_total: float) -> None:
+        """Write a contribution's buys before any is sent. A second call for the same period adds nothing."""
+        ts = now_iso()
+        with self.db:
+            self.db.execute("BEGIN")
+            for symbol, notional in alloc.items():
+                self.db.execute(
+                    "INSERT OR IGNORE INTO invest_orders (ts, period, mode, symbol, notional, planned_total, status)"
+                    " VALUES (?,?,?,?,?,?, 'planned')", (ts, period, mode, symbol, notional, planned_total))
+
+    def invest_rows(self, period: str, mode: str) -> list[sqlite3.Row]:
+        return list(self.db.execute("SELECT * FROM invest_orders WHERE period=? AND mode=? ORDER BY id",
+                                    (period, mode)))
+
+    def invest_mark(self, row_id: int, status: str, detail: str = "", order_row: int | None = None,
+                    attempt: bool = False) -> None:
+        self.db.execute("UPDATE invest_orders SET status=?, detail=?, order_id=COALESCE(?, order_id), "
+                        "attempts=attempts+? WHERE id=?", (status, detail, order_row, int(attempt), row_id))
+
+    def invest_periods(self, mode: str) -> set[str]:
+        return {r[0] for r in self.db.execute("SELECT DISTINCT period FROM invest_orders WHERE mode=?", (mode,))}
+
+    def invest_put_in(self, mode: str) -> float:
+        """Dollars the plan has sent to the broker, less orders Alpaca canceled or rejected."""
+        r = self.db.execute(
+            "SELECT COALESCE(SUM(i.notional), 0) FROM invest_orders i LEFT JOIN orders o ON o.id = i.order_id "
+            "WHERE i.mode=? AND i.status='submitted' AND COALESCE(o.status, '') NOT IN "
+            "('canceled', 'expired', 'rejected')", (mode,)).fetchone()
+        return float(r[0])
+
+    def invest_history(self, limit: int = 200) -> list[dict]:
+        return [dict(r) for r in self.db.execute("SELECT * FROM invest_orders ORDER BY id DESC LIMIT ?", (limit,))]
 
     # --- events / heartbeat --------------------------------------------------------------------
 

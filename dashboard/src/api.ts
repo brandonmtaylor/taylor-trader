@@ -46,6 +46,8 @@ export interface PositionRow {
   unrealized_pct: number | null;
   has_stop: boolean;
   owner: string | null;
+  /** held by the long-term invest plan: no stop-loss by design */
+  invest?: boolean;
   /** a sell is already waiting to fill (e.g. sent while the market was closed) */
   selling: boolean;
   stop_price: number | null;

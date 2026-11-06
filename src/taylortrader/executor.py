@@ -35,6 +35,8 @@ class Executor:
         self.journal = journal
         self.alerts = alerts or Alerts()
         self.dry_run = dry_run
+        # Money strategies don't size from (the invest plan's holdings and next contribution).
+        self.reserved = lambda account: 0.0
 
     @property
     def mode(self) -> str:
@@ -46,7 +48,8 @@ class Executor:
 
     def enter(self, sc: StrategyConfig, symbol: str, price: float, reason: str) -> EntryPlan:
         account = self.broker.snapshot()
-        intent = plan_entry(sc, symbol, price, account.equity, reason)
+        base = max(0.0, account.equity - self.reserved(account))  # the trading slice
+        intent = plan_entry(sc, symbol, price, base, reason)
         decision = self.guardrails.check(intent, account)
         common = {"strategy": sc.name, "symbol": symbol, "side": "buy", "qty": intent.qty, "est_price": price,
                       "stop_price": intent.stop_loss_price, "take_profit_price": intent.take_profit_price,
@@ -54,8 +57,9 @@ class Executor:
         if not decision:
             why = "; ".join(decision.reasons)
             if intent.qty < 1 and price > 0:  # say why in money, not "quantity must be positive"
-                budget = account.equity * sc.allocation_pct / 100
-                why = (f"{sc.allocation_pct:g}% of ${account.equity:,.0f} is ${budget:,.0f}, less than one share at "
+                budget = base * sc.allocation_pct / 100
+                slice_note = " (the trading slice; the invest plan's money is set aside)" if base < account.equity else ""
+                why = (f"{sc.allocation_pct:g}% of ${base:,.0f}{slice_note} is ${budget:,.0f}, less than one share at "
                        f"${price:,.2f}. Raise the strategy's position size or add money to the account")
             log.warning("blocked %s %s: %s", symbol, sc.name, why)
             self._record(status="blocked", detail=why, **common)

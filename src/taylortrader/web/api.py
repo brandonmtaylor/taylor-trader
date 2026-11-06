@@ -285,7 +285,9 @@ def create_app(rt: Runtime, cache_ttl: float = 10.0, project: Path = PROJECT) ->
         snap, levels, selling = cache.get("account", load)
         stops = {s for s, lv in levels.items() if lv["stop"] is not None}
         own = owners()
-        problems = find_unmanaged_positions(snap.positions, stops, own)
+        plan = set(rt.settings.invest.symbols)  # the invest plan's holdings: managed, no stop on purpose
+        problems = find_unmanaged_positions({s: p for s, p in snap.positions.items() if s not in plan}, stops, own)
+        own = {**own, **{s: "invest plan" for s in plan}}
         positions = []
         for p in sorted(snap.positions.values(), key=lambda p: -abs(p.market_value)):
             price = p.market_value / p.qty if p.qty else 0.0
@@ -294,7 +296,7 @@ def create_app(rt: Runtime, cache_ttl: float = 10.0, project: Path = PROJECT) ->
                 "pct_of_equity": p.market_value / snap.equity * 100 if snap.equity else 0,
                 "avg_entry_price": p.avg_entry_price, "price": price,
                 "unrealized_pct": (price / p.avg_entry_price - 1) * 100 if p.avg_entry_price else None,
-                "has_stop": p.symbol in stops, "owner": own.get(p.symbol),
+                "has_stop": p.symbol in stops, "owner": own.get(p.symbol), "invest": p.symbol in plan,
                 **exit_fields(levels.get(p.symbol, {}), price, p.qty),
                 "selling": p.symbol in selling,
                 "issues": problems.get(p.symbol, []),

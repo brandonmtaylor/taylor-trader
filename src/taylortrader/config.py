@@ -63,6 +63,32 @@ class AIConfig:
     timeout_seconds: int = 120
 
 
+INVEST_EVERY = ("week", "2weeks", "month", "once")
+MAX_HOLDINGS = 20
+
+
+@dataclass(frozen=True)
+class InvestConfig:
+    """A long-term invest plan: put `amount` into these weights on a schedule. No stops, no signals."""
+    enabled: bool = False
+    preview: bool = True        # run the schedule and alert what it would buy, but place no orders
+    amount: float = 0.0         # dollars per contribution
+    every: str = "month"        # week | 2weeks | month | once (all at once)
+    day: int = 1                # month: day 1-28; week/2weeks: 0=Monday .. 4=Friday
+    start: str = ""             # YYYY-MM-DD: nothing before this ("" = as soon as it's enabled)
+    until: str = ""             # YYYY-MM-DD: nothing after this ("" = keep going)
+    reserve: bool = True        # keep one contribution out of what trading strategies size from
+    holdings: list[dict[str, Any]] = field(default_factory=list)  # [{symbol, weight}], weights sum to 100
+
+    @property
+    def symbols(self) -> list[str]:
+        return [h["symbol"] for h in self.holdings]
+
+    @property
+    def weights(self) -> dict[str, float]:
+        return {h["symbol"]: float(h["weight"]) for h in self.holdings}
+
+
 @dataclass(frozen=True)
 class Config:
     mode: str = "paper"
@@ -74,6 +100,7 @@ class Config:
     alerts: AlertsConfig = field(default_factory=AlertsConfig)
     service: ServiceConfig = field(default_factory=ServiceConfig)
     ai: AIConfig = field(default_factory=AIConfig)
+    invest: InvestConfig = field(default_factory=InvestConfig)
 
     @property
     def enabled_strategies(self) -> list[StrategyConfig]:
@@ -111,7 +138,7 @@ def parse_config(raw: dict[str, Any]) -> Config:
     from taylortrader.strategies import get_strategy  # avoid import cycle
 
     _reject_secrets(raw)
-    known = {"mode", "dry_run", "data_dir", "feed", "strategies", "guardrails", "alerts", "service", "ai"}
+    known = {"mode", "dry_run", "data_dir", "feed", "strategies", "guardrails", "alerts", "service", "ai", "invest"}
     unknown = set(raw) - known
     if unknown:
         raise ConfigError(f"unknown setting(s): {sorted(unknown)}")
@@ -195,6 +222,8 @@ def parse_config(raw: dict[str, Any]) -> Config:
     if not 10 <= int(ai.timeout_seconds) <= 600:
         raise ConfigError("[ai] timeout_seconds must be between 10 and 600")
 
+    invest = _parse_invest(raw.get("invest", {}), owners)
+
     return Config(
         mode=mode,
         dry_run=dry_run,
@@ -205,7 +234,74 @@ def parse_config(raw: dict[str, Any]) -> Config:
         alerts=_section(AlertsConfig, "alerts"),
         service=_section(ServiceConfig, "service"),
         ai=ai,
+        invest=invest,
     )
+
+
+def _parse_invest(block: dict[str, Any], owners: dict[str, str]) -> InvestConfig:
+    from datetime import date
+
+    from guardrails.invest import HARD_MAX_CONTRIBUTION
+
+    try:
+        inv = InvestConfig(**block)
+    except TypeError as e:
+        raise ConfigError(f"[invest]: {e}") from None
+    holdings = []
+    for h in inv.holdings:
+        if not isinstance(h, dict) or set(h) != {"symbol", "weight"}:
+            raise ConfigError("[invest] each holding needs exactly a symbol and a weight")
+        sym = str(h["symbol"]).strip().upper()
+        if not _SYMBOL.match(sym) or "/" in sym:
+            raise ConfigError(f"[invest] {sym!r} doesn't look like a stock or ETF symbol")
+        try:
+            w = float(h["weight"])
+        except (TypeError, ValueError):
+            raise ConfigError(f"[invest] {sym}: weight must be a number") from None
+        if not (math.isfinite(w) and 0 < w <= 100):
+            raise ConfigError(f"[invest] {sym}: weight must be between 0 and 100")
+        holdings.append({"symbol": sym, "weight": w})
+    inv = replace(inv, holdings=holdings)
+    syms = inv.symbols
+    if len(set(syms)) != len(syms):
+        raise ConfigError("[invest] a symbol is listed twice")
+    if len(syms) > MAX_HOLDINGS:
+        raise ConfigError(f"[invest] at most {MAX_HOLDINGS} holdings")
+    for sym in syms:
+        # Alpaca keeps one position per symbol, so two owners couldn't be told apart.
+        if sym in owners:
+            raise ConfigError(f"{sym} is in the invest plan and in {owners[sym]}. Each symbol has one owner.")
+    if syms and abs(sum(inv.weights.values()) - 100) > 0.01:
+        raise ConfigError(f"[invest] weights add up to {sum(inv.weights.values()):g}%, not 100%")
+    if inv.every not in INVEST_EVERY:
+        raise ConfigError(f"[invest] every must be one of {INVEST_EVERY}")
+    if inv.every == "month" and not 1 <= int(inv.day) <= 28:
+        raise ConfigError("[invest] day must be 1-28 for monthly (every month has those days)")
+    if inv.every in ("week", "2weeks") and not 0 <= int(inv.day) <= 4:
+        raise ConfigError("[invest] day must be 0 (Monday) to 4 (Friday) for weekly")
+    dates = {}
+    for name in ("start", "until"):
+        v = getattr(inv, name)
+        if v:
+            try:
+                dates[name] = date.fromisoformat(v)
+            except ValueError:
+                raise ConfigError(f"[invest] {name} must be a date like 2026-12-01") from None
+    if len(dates) == 2 and dates["until"] < dates["start"]:
+        raise ConfigError("[invest] until is before start")
+    if not isinstance(inv.amount, int | float) or not math.isfinite(inv.amount) or inv.amount < 0:
+        raise ConfigError("[invest] amount must be a positive number of dollars")
+    if inv.amount > HARD_MAX_CONTRIBUTION:
+        raise ConfigError(f"[invest] amount is over the ${HARD_MAX_CONTRIBUTION:,.0f} limit per contribution")
+    for name in ("enabled", "preview", "reserve"):
+        if not isinstance(getattr(inv, name), bool):
+            raise ConfigError(f"[invest] {name} must be true or false")
+    if inv.enabled:
+        if not syms:
+            raise ConfigError("[invest] add at least one holding before turning the plan on")
+        if inv.amount < 1:
+            raise ConfigError("[invest] amount must be at least $1 (Alpaca's smallest order)")
+    return inv
 
 
 # --- writing ------------------------------------------------------------------------------------
@@ -229,6 +325,7 @@ def config_to_dict(cfg: Config) -> dict[str, Any]:
         "alerts": asdict(cfg.alerts),
         "service": asdict(cfg.service),
         "ai": asdict(cfg.ai),
+        "invest": asdict(cfg.invest),
     }
 
 
@@ -243,6 +340,8 @@ def _toml_value(v: Any) -> str:
         return '"' + v.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n") + '"'
     if isinstance(v, list):
         return "[" + ", ".join(_toml_value(x) for x in v) + "]"
+    if isinstance(v, dict):  # inline table, e.g. a holding
+        return "{ " + ", ".join(f"{k} = {_toml_value(x)}" for k, x in v.items()) + " }"
     raise ConfigError(f"can't write {type(v).__name__} to config")
 
 
@@ -260,6 +359,12 @@ def render_toml(data: dict[str, Any], name: str = "config.toml") -> str:
     for section in ("guardrails", "alerts", "service", "ai"):
         if data.get(section):
             lines += ["", f"[{section}]", *_toml_table(data[section])]
+    inv = data.get("invest")
+    if inv and (inv.get("enabled") or inv.get("holdings")):  # don't add an empty section to every file
+        rest = {k: v for k, v in inv.items() if k != "holdings"}
+        lines += ["", "[invest]", *_toml_table(rest), "holdings = ["]
+        lines += [f"  {_toml_value(h)}," for h in inv.get("holdings", [])]
+        lines += ["]"]
     return "\n".join(lines) + "\n"
 
 

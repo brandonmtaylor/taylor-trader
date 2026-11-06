@@ -96,3 +96,27 @@ loop_seconds = 30
 heartbeat_stale_minutes = 15   # the watchdog alerts if the service is quiet longer than this
 daily_summary = true
 auto_protect = true            # re-create a missing stop on positions a strategy owns
+
+# ---------------------------------------------------------------------------
+# Long-term invest plan (optional). Buys a fixed mix of funds on a schedule and holds it: no
+# signals, no stop-losses, and the daily loss limit doesn't block it (buying on down days is the
+# point). Each contribution goes to whatever is furthest under its weight first, so new money
+# keeps the mix balanced without selling. Fractional shares, so any amount splits exactly.
+# It invests cash already in the account: set up deposits at Alpaca. Trading strategies size
+# from what's left after the plan's holdings (and its next contribution, with reserve = true).
+# The holdings below are an example, not a recommendation. Not financial advice.
+# ---------------------------------------------------------------------------
+# [invest]
+# enabled = true
+# preview = true          # alert what it would buy, place nothing; set false to invest for real
+# amount = 200            # dollars per contribution
+# every = "month"         # week | 2weeks | month | once (all at once)
+# day = 1                 # month: 1-28; week/2weeks: 0 = Monday .. 4 = Friday
+# start = ""              # YYYY-MM-DD, optional
+# until = ""              # YYYY-MM-DD, optional
+# reserve = true
+# holdings = [
+#   { symbol = "VTI", weight = 60 },    # US stocks
+#   { symbol = "VXUS", weight = 20 },   # international stocks
+#   { symbol = "BND", weight = 20 },    # US bonds
+# ]

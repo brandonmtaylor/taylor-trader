@@ -79,6 +79,11 @@ class Service:
     def __post_init__(self):
         self.guardrails = Guardrails(self.cfg.limits)
         self.executor = Executor(self.broker, self.guardrails, self.journal, self.alerts, self.dry_run)
+        from taylortrader.invest import InvestRunner
+
+        self.invest = InvestRunner(self.cfg, self.broker, self.journal, self.alerts, self.guardrails, self.now,
+                                   self.dry_run)
+        self.executor.reserved = self.invest.reserved
         # One instance per configured strategy, looked up by symbol (each symbol has one owner).
         # Keying by name would let two blocks of the same strategy overwrite each other's settings.
         self.strategy_for: dict[str, Strategy] = {}
@@ -110,6 +115,8 @@ class Service:
     def run_forever(self) -> None:
         mode = "DRY RUN" if self.dry_run else self.broker.mode.upper()
         plan = ", ".join(f"{sc.name} {sc.symbols} {sc.timeframe}" for sc in self.cfg.enabled_strategies) or "none"
+        if self.cfg.invest.enabled:
+            plan += f"; invest plan {self.cfg.invest.symbols}" + (" (preview)" if self.invest.mode == "preview" else "")
         # Starting right after a settings change: that alert already said so; don't ping twice.
         last = self.journal.db.execute("SELECT kind, ts FROM events ORDER BY id DESC LIMIT 1").fetchone()
         after_restart = bool(last and last["kind"] == "restart"
@@ -163,6 +170,13 @@ class Service:
             return max(30.0, min(300.0, until_open))
 
         self._maybe_open_note()
+        try:
+            self.invest.tick(snap)
+        except Exception as e:  # the plan failing must not stop the strategies
+            log.exception("invest plan failed")
+            self.journal.event("error", f"invest plan: {type(e).__name__}: {e}", "error")
+            self.alerts.send("Invest plan error", f"{type(e).__name__}: {e}\nStrategies kept running.",
+                             Level.WARNING, key=f"err:invest:{type(e).__name__}")
         # One symbol failing (bad data, a rejected order) must not stop the others from being
         # checked. If every symbol fails, it's systemic: raise so the loop's error count applies.
         jobs = [(sc, symbol) for sc in self.cfg.enabled_strategies for symbol in sc.symbols]
@@ -254,6 +268,8 @@ class Service:
             if status == "filled":
                 px = float(order.filled_avg_price)
                 self.journal.mark_filled(row["id"], px, str(order.filled_at))
+                if row["strategy"] == "invest":
+                    continue  # the plan already said what it bought; three "filled" pings is noise
                 stop = f", stop ${row['stop_price']:,.2f}" if row["stop_price"] else ""
                 self.alerts.send(f"Filled: {row['side'].upper()} {row['symbol']}",
                                  f"{float(order.filled_qty):g} @ ${px:,.2f}{stop}\n{row['reason']}")
@@ -286,7 +302,10 @@ class Service:
         selling = self.broker.symbols_selling()
         managed = set(self.owner)
         today = self.now().astimezone(NY).date()
-        for symbol, issues in find_unmanaged_positions(snap.positions, stops, managed).items():
+        # Invest plan holdings are managed by the plan and carry no stop on purpose.
+        plan = set(self.cfg.invest.symbols)
+        trading = {s: p for s, p in snap.positions.items() if s not in plan}
+        for symbol, issues in find_unmanaged_positions(trading, stops, managed).items():
             if symbol in selling:
                 continue
             pos = snap.positions[symbol]
@@ -381,12 +400,16 @@ class Service:
             closed = stats.results(fills, strategy_of, self.now())["bot"]["today"]
         except Exception as e:  # noqa: BLE001  the summary goes out without it
             log.warning("results for the summary unavailable: %s", e)
+        plan = set(self.cfg.invest.symbols)
         positions = [report.PositionLine(p.symbol, p.qty, p.market_value, p.avg_entry_price, p.symbol in stops,
-                                         self.owner[p.symbol].name if p.symbol in self.owner else None)
+                                         self.owner[p.symbol].name if p.symbol in self.owner
+                                         else "invest plan" if p.symbol in plan else None)
                      for p in sorted(snap.positions.values(), key=lambda p: -abs(p.market_value))]
         return report.Summary(day=today, mode="DRY RUN" if self.dry_run else self.broker.mode.upper(),
                               equity=snap.equity, day_pnl_pct=snap.day_pnl_pct, cash=snap.cash, kill_on=self.kill_on,
-                              positions=positions, orders=orders, problems=problems, closed=closed)
+                              positions=positions, orders=orders, problems=problems, closed=closed,
+                              loss_limit_pct=self.cfg.limits.max_daily_loss_pct,
+                              notes=[n for n in [self.invest.summary_line(snap)] if n])
 
     def daily_summary_text(self, snap) -> str:
         return report.text(self.daily_summary(snap))
