@@ -26,17 +26,13 @@ from datetime import datetime, timedelta
 import pandas as pd
 
 from taylortrader import indicators
+from taylortrader.stats import utc_ts
 from taylortrader.strategies.ai import FEATURES as FEATURE_KEYS
 
 BAR = timedelta(hours=1)          # the live report card grades on hourly bars
 SESSION = timedelta(hours=6.5)    # a regular trading day
 THRESHOLD = 1.0         # percent
 BUCKETS = ((0.0, 0.6, "Under 60%"), (0.6, 0.7, "60–69%"), (0.7, 1.01, "70% and up"))
-
-
-def _ts(v) -> pd.Timestamp:
-    t = pd.Timestamp(v)
-    return t.tz_localize("UTC") if t.tzinfo is None else t.tz_convert("UTC")
 
 
 def horizon_bars(bar: timedelta) -> int:
@@ -53,7 +49,7 @@ def outcome(df: pd.DataFrame, when, n: int = HORIZON_BARS, bar: timedelta = BAR)
     """Price when asked, then the close, high and low over the next `n` bars. None until known."""
     if df is None or df.empty:
         return None
-    t = _ts(when)
+    t = utc_ts(when)
     done = df.index + bar <= t           # bars that had finished when the model was asked
     if not done.any():
         return None
@@ -82,7 +78,7 @@ def recalculated(df: pd.DataFrame | None, when, bar: timedelta = BAR) -> dict | 
     Close to what the model saw, not exact: history gets revised slightly after the fact."""
     if df is None or df.empty:
         return None
-    t = _ts(when)
+    t = utc_ts(when)
     done = df.index + bar <= t
     if not done.any():
         return None
@@ -194,6 +190,6 @@ def bars_needed(decisions: list[dict], now: datetime) -> dict[str, datetime]:
     for d in decisions:
         if d.get("error") or not d.get("action"):
             continue
-        t = _ts(d["ts"]).to_pydatetime() - timedelta(days=60)  # 200+ hourly bars, for recalculating ma_200
+        t = utc_ts(d["ts"]).to_pydatetime() - timedelta(days=60)  # 200+ hourly bars, for recalculating ma_200
         first[d["symbol"]] = min(first.get(d["symbol"], now), t)
     return first

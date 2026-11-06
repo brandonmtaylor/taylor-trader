@@ -163,7 +163,7 @@ def run(
         curve[n - 1] = cash
 
     curve = curve[first:]
-    bh = c[first:] / o[first + 1] if n > first + 1 else c[first:] / c[first]
+    bh = c[first:] / o[first + 1]
     return Result(
         strategy=strategy.name,
         bars=n - first,
