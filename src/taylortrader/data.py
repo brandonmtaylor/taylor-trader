@@ -26,6 +26,7 @@ from taylortrader.broker import with_timeout
 from taylortrader.secrets import AlpacaCredentials
 
 NY = ZoneInfo("America/New_York")
+READJUSTED = 0.005  # a cached bar changing by more than this means a split or dividend re-adjustment
 log = logging.getLogger(__name__)
 
 TIMEFRAMES = {
@@ -97,8 +98,16 @@ class MarketData:
         else:
             tail_start = cached.index[-1].to_pydatetime()
             new = self._fetch(symbol, timeframe, tail_start, end) if tail_start < end else cached.iloc[:0]
-            df = pd.concat([cached, new])
-            df = df[~df.index.duplicated(keep="last")]
+            overlap = new[new.index == cached.index[-1]]
+            if len(overlap) and abs(overlap["close"].iloc[0] / cached["close"].iloc[-1] - 1) > READJUSTED:
+                # Bars are split- and dividend-adjusted as of when they're fetched. If the bar we
+                # already have now reads differently, the old ones are on a different basis, and
+                # joining them would show a split as a price crash. Start over.
+                log.info("%s %s: adjusted prices changed; refetching", symbol, timeframe)
+                df = self._fetch(symbol, timeframe, min(pd.Timestamp(start), cached.index[0]).to_pydatetime(), end)
+            else:
+                df = pd.concat([cached, new])
+                df = df[~df.index.duplicated(keep="last")]
 
         df = df.sort_index()
         if not df.empty:

@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
-from guardrails import Decision, Guardrails, OrderIntent, Side
+from guardrails import AccountSnapshot, Decision, Guardrails, OrderIntent, Position, Side
 from taylortrader.alerts import Alerts, Level
 from taylortrader.config import StrategyConfig
 from taylortrader.journal import Journal
@@ -37,6 +37,9 @@ class Executor:
         self.dry_run = dry_run
         # Money strategies don't size from (the invest plan's holdings and next contribution).
         self.reserved = lambda account: 0.0
+        # Buys sent during this check. The account snapshot can't show them yet, so without this,
+        # several signals in one check would each see the same room under the limits.
+        self.inflight: dict[str, Position] = {}
 
     @property
     def mode(self) -> str:
@@ -46,9 +49,15 @@ class Executor:
         if self.journal:
             self.journal.record_order(mode=self.mode, **kw)
 
+    def _with_inflight(self, account: AccountSnapshot) -> AccountSnapshot:
+        new = {s: p for s, p in self.inflight.items() if s not in account.positions}
+        return replace(account, positions={**account.positions, **new},
+                       cash=account.cash - sum(p.market_value for p in new.values()),
+                       trades_today=account.trades_today + len(new))
+
     def enter(self, sc: StrategyConfig, symbol: str, price: float, reason: str,
               client_order_id: str | None = None) -> EntryPlan:
-        account = self.broker.snapshot()
+        account = self._with_inflight(self.broker.snapshot())
         base = max(0.0, account.equity - self.reserved(account))  # the trading slice
         intent = plan_entry(sc, symbol, price, base, reason)
         decision = self.guardrails.check(intent, account)
@@ -84,6 +93,7 @@ class Executor:
             self._record(status="failed", detail=str(e), **common)
             self.alerts.send(f"Buy FAILED: {symbol}", str(e), Level.WARNING)
             raise
+        self.inflight[symbol] = Position(symbol, intent.qty, intent.qty * price, price)
         self._record(status="submitted", broker_order_id=str(order.id), **common)
         self.alerts.send(f"[{self.mode}] Buying {symbol}",
                          f"{int(intent.qty)} @ ~${price:,.2f}, stop ${intent.stop_loss_price:,.2f} at Alpaca\n"

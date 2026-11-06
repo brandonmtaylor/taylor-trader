@@ -639,3 +639,20 @@ def test_each_fill_gets_its_own_alert(svc):
 def test_hand_edited_values_that_would_break_trading_are_refused(patch, msg):
     with pytest.raises(ConfigError, match=msg):
         parse_config(patch)
+
+
+def test_buys_in_one_check_count_against_each_other(svc):
+    # 20% each, but the exposure limit only has room for one: the snapshot can't show the first buy yet.
+    svc.guardrails.limits = dataclasses.replace(svc.guardrails.limits, max_total_exposure_pct=30.0)
+    sc = svc.cfg.strategies[0]
+    svc.executor.enter(sc, "AAA", 100.0, "first")
+    svc.executor.enter(sc, "BBB", 100.0, "second")
+    assert [e.symbol for e in svc.broker.entries] == ["AAA"]
+    svc.executor.inflight.clear()  # each check starts from what the account really shows
+
+
+def test_a_paper_order_left_open_isnt_polled_on_the_live_account(svc):
+    svc.journal.record_order(mode="live", strategy="s", symbol="VRT", side="sell", status="submitted",
+                             broker_order_id="x")
+    assert svc.journal.pending_orders("paper") == []
+    assert not svc.journal.sold_since("VRT", "2099-01-01", "paper")

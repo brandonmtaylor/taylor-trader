@@ -78,3 +78,26 @@ def test_unsupported_timeframe_goes_straight_to_fallback():
     data, fb, switches = make(primary, Feed("iex", frame(NOW, 2)))
     data.bars("VRT", "1Hour", NOW - timedelta(days=5))
     assert primary.calls == 0 and fb.calls == 1 and switches == []
+
+
+def test_a_split_rebuilds_the_cache_instead_of_showing_a_crash(tmp_path):
+    from taylortrader.data import MarketData
+
+    def bars(start, closes):
+        idx = pd.date_range(start, periods=len(closes), freq="D", tz="UTC")
+        return pd.DataFrame({"open": closes, "high": closes, "low": closes, "close": closes, "volume": 1.0}, index=idx)
+
+    md = MarketData.__new__(MarketData)
+    md.cache_dir, md.feed = tmp_path, "iex"
+    md._fetch = lambda *a: bars("2026-01-01", [100.0, 100.0, 100.0])
+    start = datetime(2026, 1, 1, tzinfo=UTC)
+    md.bars("X", "1Day", start, datetime(2026, 1, 3, tzinfo=UTC))
+    calls = []
+
+    def after_split(symbol, tf, s, e):              # a 2:1 split: every bar now reads half
+        calls.append(s)
+        return bars("2026-01-03", [50.0, 50.0]) if len(calls) == 1 else bars("2026-01-01", [50.0] * 4)
+
+    md._fetch = after_split
+    df = md.bars("X", "1Day", start, datetime(2026, 1, 4, tzinfo=UTC))
+    assert len(calls) == 2 and set(df["close"]) == {50.0}

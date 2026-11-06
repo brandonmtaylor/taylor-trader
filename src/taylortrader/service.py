@@ -169,6 +169,7 @@ class Service:
             self.alerts.send("TaylorTrader stopped", "Stopped by user (Ctrl-C or launchctl).", key="stop")
 
     def tick(self) -> float:
+        self.executor.inflight.clear()
         self.journal.beat("dry-run" if self.dry_run else "ok")
         self._ping_healthcheck()
         self._check_kill_switch()
@@ -271,7 +272,7 @@ class Service:
                              key=f"open:{today}")
 
     def check_fills(self) -> None:
-        for row in self.journal.pending_orders():
+        for row in self.journal.pending_orders(self.broker.mode):
             try:
                 order = self.broker.get_order(row["broker_order_id"])
             except Exception as e:  # noqa: BLE001
@@ -304,7 +305,7 @@ class Service:
         # dashboard after hours, filled at the open), so look at fill times as well as order times.
         cutoff = self.now() - timedelta(hours=2)
         for symbol in set(self.known_positions) - set(held):
-            if not self.journal.sold_since(symbol, cutoff.isoformat()):
+            if not self.journal.sold_since(symbol, cutoff.isoformat(), self.broker.mode):
                 self.journal.event("stop_hit", f"{symbol} position closed at the broker (stop or take-profit)")
                 self.alerts.send(f"Position closed: {symbol}", self._closed_at_broker(symbol), Level.WARNING)
         self.known_positions = held
