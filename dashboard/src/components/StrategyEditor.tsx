@@ -95,7 +95,7 @@ export function StrategyEditor({ value, onChange, onRemove, catalog, limits, tim
 
       {!isAI && entry && Object.keys(entry.params).length > 0 && (
         <details className="params" open={value.name === "rule"}>
-          <summary>Fine-tune <span className="params__count">{Object.keys(value.params).length} changed</span></summary>
+          <summary>{value.name === "rule" ? "Rules" : "Fine-tune"} <span className="params__count">{Object.keys(value.params).length} changed</span></summary>
           <div className="grid-fields">
             {Object.entries(entry.params).map(([k, def]) => {
               const cur = value.params[k] ?? def;
@@ -114,7 +114,9 @@ export function StrategyEditor({ value, onChange, onRemove, catalog, limits, tim
               ) : (
                 <Labeled key={k} label={paramLabel(k)} wide={typeof def === "string"}
                   hint={typeof def === "string" && value.name === "rule"
-                    ? <>Default <code>{String(def)}</code>. Use {RULE_NAMES}, numbers, + − × ÷, comparisons, and/or/not; <code>prev_</code> means the bar before.</>
+                    ? (k === "buy_when"
+                      ? <>Default <code>{String(def)}</code>. Use {RULE_NAMES}, numbers, + − × ÷, comparisons, and/or/not; <code>prev_</code> means the bar before.</>
+                      : <>Default <code>{String(def)}</code>. Same names as above; empty means only the stop-loss sells.</>)
                     : `Default ${String(def)}`}
                   render={(id) =>
                     typeof def === "number"
