@@ -1,7 +1,7 @@
 import dataclasses
 import sqlite3
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from types import SimpleNamespace
 
 import numpy as np
@@ -10,7 +10,7 @@ import pytest
 
 from guardrails import AccountSnapshot, Limits, Position
 from taylortrader.alerts import Alerts, Level, Notifier
-from taylortrader.config import Config, ConfigError, ServiceConfig, StrategyConfig, load_config
+from taylortrader.config import Config, ConfigError, ServiceConfig, StrategyConfig, load_config, parse_config
 from taylortrader.journal import Journal
 from taylortrader.service import Service, completed_bars, kill_file, watchdog
 from taylortrader.strategies import Signal, Strategy, register
@@ -96,7 +96,13 @@ class FakeBroker:
     def open_orders(self):
         return self.orders
 
-    def submit_entry(self, intent):
+    def submit_entry(self, intent, client_order_id=None):
+        # Like Alpaca: a repeated client order id is refused.
+        seen = self.__dict__.setdefault("client_ids", [])
+        if client_order_id and client_order_id in seen:
+            raise RuntimeError('{"code":40010001,"message":"client_order_id must be unique"}')
+        if client_order_id:
+            seen.append(client_order_id)
         self.entries.append(intent)
         return SimpleNamespace(id=f"o{len(self.entries)}")
 
@@ -540,3 +546,96 @@ def test_start_ping_is_quiet_and_skipped_right_after_a_settings_restart(svc):
     svc.journal.event("restart", "strategies or limits updated")  # the old process said "settings changed"
     svc.run_forever()
     assert not any(t.startswith("TaylorTrader started") for t, _ in sent)
+
+
+# --- review fixes (2026-11-06) ---------------------------------------------------------------------
+
+def _tick(s):
+    try:
+        s.tick()
+    except Exception:  # noqa: BLE001, S110 - the loop counts it; the test checks what happens next
+        pass
+
+
+def test_a_failed_exit_is_retried_on_the_same_bar(svc):
+    svc.broker.positions["VRT"] = Position("VRT", 18, 1980, 100)
+    svc.broker.stops.add("VRT")
+    FLAGS["exit"] = True
+    real, calls = svc.broker.close_position, []
+
+    def flaky(symbol, reason=""):
+        calls.append(symbol)
+        if len(calls) == 1:
+            raise RuntimeError("insufficient qty available for order (held_for_orders)")
+        return real(symbol, reason)
+
+    svc.broker.close_position = flaky
+    _tick(svc)
+    _tick(svc)
+    assert calls == ["VRT", "VRT"] and svc.broker.closes == ["VRT"]
+
+
+def test_no_entry_on_a_stale_bar(svc):
+    FLAGS["entry"] = True
+    svc.now = lambda: NOW + timedelta(hours=2)  # the newest bar is 2 hours old
+    svc.tick()
+    assert svc.broker.entries == []
+
+
+def test_a_restart_doesnt_rebuy_on_the_same_bar(svc):
+    FLAGS["entry"] = True
+    svc.tick()
+    svc.last_bar.clear()  # what a restart (any settings save) does
+    svc.tick()
+    assert len(svc.broker.entries) == 1
+    assert not any("FAILED" in t for t in svc.rec.titles())
+
+
+def test_an_unclosable_breached_position_doesnt_stop_the_check(svc):
+    svc.broker.positions["VRT"] = Position("VRT", 36, 36 * 224, 315)
+
+    def refuse(symbol, reason=""):
+        raise RuntimeError("market closed")
+
+    svc.broker.close_position = refuse
+    svc.tick()  # doesn't raise
+    assert any(level is Level.CRITICAL for _, _, level in svc.rec.sent)
+
+
+def test_the_daily_summary_is_retried_after_a_blip(svc):
+    svc.broker.is_open = False
+    svc.now = lambda: datetime(2026, 11, 4, 21, 10, tzinfo=UTC)
+    real = svc.daily_summary
+
+    def once_down(snap):
+        svc.daily_summary = real
+        raise ConnectionError("blip")
+
+    svc.daily_summary = once_down
+    _tick(svc)
+    _tick(svc)
+    assert sum(t.startswith("Daily summary") for t in svc.rec.titles()) == 2
+
+
+def test_each_fill_gets_its_own_alert(svc):
+    for i in (1, 2):
+        svc.journal.record_order(mode="paper", strategy="test_signal", symbol="VRT", side="sell", qty=1,
+                                 status="submitted", reason="exit", broker_order_id=f"s{i}")
+        svc.broker.order_status[f"s{i}"] = SimpleNamespace(
+            status="filled", filled_avg_price="100", filled_at="2026-11-04T15:00:01Z", filled_qty="1")
+    svc.check_fills()
+    assert sum(t == "Filled: SELL VRT" for t in svc.rec.titles()) == 2
+
+
+@pytest.mark.parametrize(("patch", "msg"), [
+    ({"guardrails": {"max_daily_loss_pct": float("nan")}}, "must be a number"),
+    ({"guardrails": {"max_trades_per_day": float("inf")}}, "must be a number"),
+    ({"strategies": [{"name": "macd_rsi", "symbols": "SPY"}]}, "must be a list"),
+    ({"strategies": [{"name": "macd_rsi", "symbols": ["SPY"], "take_profit_pct": float("inf")}]}, "must be a number"),
+    ({"service": {"loop_seconds": 0}}, "loop_seconds"),
+    ({"invest": {"enabled": True, "amount": 100, "start": date(2026, 12, 1),
+                 "holdings": [{"symbol": "VTI", "weight": 100}]}}, "wrong type"),
+])
+def test_hand_edited_values_that_would_break_trading_are_refused(patch, msg):
+    with pytest.raises(ConfigError, match=msg):
+        parse_config(patch)

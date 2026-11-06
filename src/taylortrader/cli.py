@@ -316,6 +316,22 @@ def _print_search(rep: dict, top: int) -> None:
     print(f"\n{rep['verdict']}")
 
 
+def _single_instance(data_dir: Path):
+    """Hold a lock for as long as this process runs, so two bots can't trade the same account at
+    once (launchd's plus one started by hand). None if another process holds it. The lock goes
+    away with the process, crash included; a restart (exec) takes it again."""
+    import fcntl
+
+    data_dir.mkdir(parents=True, exist_ok=True)
+    f = (data_dir / "service.lock").open("w")
+    try:
+        fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        f.close()
+        return None
+    return f
+
+
 def cmd_run(args) -> int:
 
     from taylortrader.app import build_service
@@ -323,6 +339,12 @@ def cmd_run(args) -> int:
 
     cfg = load_config(args.config)
     setup_logging(cfg.data_dir / "logs", logging.DEBUG if args.verbose else logging.INFO)
+    if not args.once:
+        lock = _single_instance(cfg.data_dir)
+        if lock is None:
+            print("The bot is already running (in the background or another terminal). Stop that one first.",
+                  file=sys.stderr)
+            return 1
     svc = build_service(cfg, dry_run=args.dry_run, config_path=None if args.once else args.config)
     if args.once:
         wait = svc.tick()

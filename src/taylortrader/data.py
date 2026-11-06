@@ -25,6 +25,7 @@ from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
 from taylortrader.broker import with_timeout
 from taylortrader.secrets import AlpacaCredentials
 
+NY = ZoneInfo("America/New_York")
 log = logging.getLogger(__name__)
 
 TIMEFRAMES = {
@@ -145,7 +146,11 @@ class YahooData:
         if df.empty:
             return pd.DataFrame(columns=COLUMNS)
         df = df.rename(columns=str.lower)[COLUMNS].astype(float).dropna(subset=["close"])
-        df.index = df.index.tz_convert(UTC) if timeframe != "1Day" else df.index.tz_localize(None).tz_localize(UTC)
+        # Daily bars: Yahoo dates them in New York. Stamp them at midnight New York, like Alpaca does;
+        # midnight UTC would be the evening before in New York, and today's unfinished bar would
+        # pass for yesterday's finished one.
+        df.index = (df.index.tz_convert(UTC) if timeframe != "1Day"
+                    else df.index.tz_localize(None).tz_localize(NY).tz_convert(UTC))
         df.index.name = "timestamp"
         if regular_session and timeframe != "1Day" and not df.empty:
             df = regular_hours(df)

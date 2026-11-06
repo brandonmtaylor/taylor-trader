@@ -289,11 +289,12 @@ class Service:
                 if row["side"] == "sell":
                     result = "\n" + (self._result(row["symbol"], qty, px) or "")
                 self.alerts.send(f"Filled: {row['side'].upper()} {row['symbol']}",
-                                 f"{qty:g} @ ${px:,.2f}{stop}{result.rstrip()}\n{row['reason']}")
+                                 f"{qty:g} @ ${px:,.2f}{stop}{result.rstrip()}\n{row['reason']}",
+                                 key=f"filled:{row['id']}")  # every fill gets its own alert
             elif status in ("canceled", "expired", "rejected"):
                 self.journal.mark_status(row["id"], status)
                 self.alerts.send(f"Order {status}: {row['side']} {row['symbol']}", row["reason"] or "",
-                                 Level.WARNING)
+                                 Level.WARNING, key=f"order-{status}:{row['id']}")
 
     def check_positions(self, snap) -> None:
         held = {s: p.qty for s, p in snap.positions.items()}
@@ -369,7 +370,10 @@ class Service:
             self.alerts.send(f"{pos.symbol}: stop level breached while unprotected",
                              f"Price ${price:,.2f} is below the {sc.stop_loss_pct}% stop (${stop:,.2f}). Exiting.",
                              Level.CRITICAL, key=f"protect:{pos.symbol}")
-            self.executor.exit(sc.name, pos.symbol, pos.qty, price, "stop level breached while unprotected")
+            try:
+                self.executor.exit(sc.name, pos.symbol, pos.qty, price, "stop level breached while unprotected")
+            except Exception as e:  # noqa: BLE001 - already alerted as critical; keep protecting the rest
+                log.error("exit of unprotected %s failed: %s", pos.symbol, e)
             return
         try:
             self.broker.place_stop(pos.symbol, pos.qty, stop)
@@ -389,9 +393,11 @@ class Service:
             log.warning("%s %s: only %d bars, need > %d", sc.name, symbol, len(df), strat.warmup)
             return
         key = (sc.name, symbol)
-        if self.last_bar.get(key) == df.index[-1]:
+        bar_ts = df.index[-1]
+        if self.last_bar.get(key) == bar_ts:
             return  # no new bar since last decision
-        self.last_bar[key] = df.index[-1]
+        previous = self.last_bar.get(key)
+        self.last_bar[key] = bar_ts
 
         b = Bars(indicators.add_all(df), symbol=symbol)
         i = len(df) - 1
@@ -400,13 +406,26 @@ class Service:
         if pos and pos.qty > 0:
             sig = strat.exit(b, i, pos.avg_entry_price)
             if sig:
-                self.executor.exit(sc.name, symbol, pos.qty, price, f"{sc.name}: {sig.reason}")
+                try:
+                    self.executor.exit(sc.name, symbol, pos.qty, price, f"{sc.name}: {sig.reason}")
+                except Exception:
+                    # Decide on this bar again next check: many exit signals fire on one bar only,
+                    # so marking it handled would mean the sell never happens.
+                    self.last_bar[key] = previous
+                    raise
         else:
+            if sc.timeframe != "1Day" and now - (bar_ts + BAR[sc.timeframe]) > 2 * BAR[sc.timeframe]:
+                # The newest finished bar is old: the first minutes of a session, or data that
+                # stopped updating. Buying now would size and set the stop from a stale price.
+                log.info("%s %s: newest bar %s is stale; no entry", sc.name, symbol, bar_ts)
+                return
             if any(o.symbol == symbol and o.side.value == "buy" for o in self.broker.open_orders()):
                 return  # a buy is already working
             sig = strat.entry(b, i)
             if sig:
-                self.executor.enter(sc, symbol, price, sig.reason)
+                # One order per strategy, symbol and bar, even across restarts or a retried request.
+                cid = f"tt-{sc.name}-{symbol}-{int(bar_ts.timestamp())}"
+                self.executor.enter(sc, symbol, price, sig.reason, client_order_id=cid)
 
     def _maybe_daily_summary(self, snap) -> None:
         if not self.cfg.service.daily_summary:
@@ -415,13 +434,14 @@ class Service:
         today = now_ny.date()
         if self.summary_date == today or now_ny.weekday() >= 5 or (now_ny.hour, now_ny.minute) < (16, 5):
             return
-        self.summary_date = today
         if self.journal.db.execute("SELECT 1 FROM events WHERE kind='summary' AND message=?",
                                    (str(today),)).fetchone():
+            self.summary_date = today
             return  # already sent today (e.g. the service restarted after the close)
-        summary = self.daily_summary(snap)
+        summary = self.daily_summary(snap)  # if this fails (a network blip), the next check tries again
         self.alerts.summary(f"Daily summary {today}", report.text(summary), report.html(summary))
         self.journal.event("summary", str(today))
+        self.summary_date = today
 
     def daily_summary(self, snap) -> report.Summary:
         today = self.now().astimezone(NY).date()

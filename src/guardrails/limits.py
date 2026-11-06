@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from dataclasses import asdict, dataclass, fields
 from typing import Any
 
@@ -32,7 +33,10 @@ class Limits:
         problems = []
         for name, value in asdict(self).items():
             hard = getattr(HARD_LIMITS, name)
-            if value <= 0:
+            # NaN compares false with everything, so it would slip past "> hard" and loosen a limit.
+            if isinstance(value, bool) or not isinstance(value, int | float) or not math.isfinite(value):
+                problems.append(f"{name}={value!r} must be a number")
+            elif value <= 0:
                 problems.append(f"{name}={value} must be positive")
             elif value > hard:
                 problems.append(f"{name}={value} exceeds the hard limit of {hard}")

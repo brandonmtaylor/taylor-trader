@@ -39,6 +39,7 @@ from taylortrader.config import (
     parse_invest,
     save_config,
 )
+from taylortrader.invest import NY
 from taylortrader.secrets import (
     LIVE_CONFIRM_VAR,
     SETTABLE,
@@ -631,6 +632,10 @@ def create_app(rt: Runtime, cache_ttl: float = 10.0, project: Path | None = None
             new = parse_invest(dict(body.plan), owners_now)
         except ConfigError as e:
             raise HTTPException(422, str(e)) from None
+        if new.enabled and not new.start:
+            # The plan's first day: missed days before it are never "caught up", and a lump sum
+            # saved again later with a new start is a new lump sum.
+            new = replace(new, start=datetime.now(NY).date().isoformat())
         real = new.enabled and not new.preview
         was_real = current.invest.enabled and not current.invest.preview
         bigger = new.amount > current.invest.amount or new.holdings != current.invest.holdings \
@@ -700,7 +705,10 @@ def create_app(rt: Runtime, cache_ttl: float = 10.0, project: Path | None = None
             if info.get("status") != "ACTIVE":
                 raise HTTPException(422, f"Your live account's status is {info.get('status')}, not ACTIVE.")
             set_secret(LIVE_CONFIRM_VAR, "1", rt.dotenv_path)
-            new = replace(cfg, mode="live", dry_run=False)
+            # A plan confirmed for paper money doesn't carry over to real money: it goes back to
+            # preview, and buying for real needs the "LIVE BUY ..." confirmation.
+            inv = replace(cfg.invest, preview=True) if cfg.invest.enabled else cfg.invest
+            new = replace(cfg, mode="live", dry_run=False, invest=inv)
         else:
             delete_secret(LIVE_CONFIRM_VAR, rt.dotenv_path)
             new = replace(cfg, mode="paper", dry_run=body.mode == "dry-run")

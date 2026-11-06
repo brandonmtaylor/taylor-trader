@@ -132,8 +132,25 @@ def load_config(path: Path | str = "config.toml") -> Config:
 _SYMBOL = re.compile(r"^[A-Z][A-Z0-9.\-/]{0,14}$")
 
 
+def _number(label: str, name: str, value: Any) -> float:
+    if isinstance(value, bool) or not isinstance(value, int | float) or not math.isfinite(value):
+        raise ConfigError(f"{label}: {name} must be a number, got {value!r}")
+    return float(value)
+
+
 def parse_config(raw: dict[str, Any]) -> Config:
     """Validate a TOML-shaped dict (from the file, or from the dashboard) into a Config."""
+    try:
+        return _parse_config(raw)
+    except ConfigError:
+        raise
+    except (TypeError, ValueError, AttributeError) as e:
+        # A wrongly typed value in a hand-edited file (an unquoted date, a number where a list goes)
+        # is a settings mistake to report, not a crash.
+        raise ConfigError(f"a setting has the wrong type: {e}") from None
+
+
+def _parse_config(raw: dict[str, Any]) -> Config:
     from guardrails.limits import LimitsError
     from taylortrader.strategies import get_strategy  # avoid import cycle
 
@@ -160,6 +177,11 @@ def parse_config(raw: dict[str, Any]) -> Config:
     strategies = []
     for i, block in enumerate(raw.get("strategies", [])):
         label = f"strategy {i + 1} ({block.get('name', '?')})"
+        if not isinstance(block.get("symbols", []), list):
+            raise ConfigError(f'{label}: symbols must be a list, like ["SPY"]')
+        for name in ("allocation_pct", "stop_loss_pct", "take_profit_pct"):
+            if name in block:
+                _number(label, name, block[name])
         try:
             sc = StrategyConfig(**block)
         except TypeError as e:
@@ -223,6 +245,11 @@ def parse_config(raw: dict[str, Any]) -> Config:
         raise ConfigError("[ai] timeout_seconds must be between 10 and 600")
 
     invest = parse_invest(raw.get("invest", {}), owners)
+    service = _section(ServiceConfig, "service")
+    if not 5 <= _number("[service]", "loop_seconds", service.loop_seconds) <= 3600:
+        raise ConfigError("[service] loop_seconds must be between 5 and 3600")
+    if not 1 <= _number("[service]", "heartbeat_stale_minutes", service.heartbeat_stale_minutes) <= 1440:
+        raise ConfigError("[service] heartbeat_stale_minutes must be between 1 and 1440")
 
     return Config(
         mode=mode,
@@ -232,7 +259,7 @@ def parse_config(raw: dict[str, Any]) -> Config:
         strategies=strategies,
         limits=limits,
         alerts=_section(AlertsConfig, "alerts"),
-        service=_section(ServiceConfig, "service"),
+        service=service,
         ai=ai,
         invest=invest,
     )

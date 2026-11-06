@@ -512,3 +512,20 @@ def test_sessions_expire_and_a_new_passcode_signs_everyone_out():
     assert not s.valid(cookie)
     a, b = new_passcode(), new_passcode()
     assert a != b and len(a) == 14 and not set(a.replace("-", "")) & set("01ilo")
+
+
+def test_going_live_puts_the_invest_plan_back_in_preview(client):
+    _assets(client)
+    real = {**PLAN, "preview": False}
+    assert client.put("/api/invest", json={"plan": real, "confirm": "BUY $200.00 MONTHLY"}, headers=WRITE).status_code == 200
+    with (client.path.parent / ".env").open("a") as f:
+        f.write("ALPACA_LIVE_KEY_ID=goodlive\nALPACA_LIVE_SECRET_KEY=s3cretlive\n")
+    assert client.post("/api/mode", json={"mode": "live", "confirm": "GO LIVE"}, headers=WRITE).status_code == 200
+    inv = load_config(client.path).invest
+    assert inv.enabled and inv.preview          # real money needs the "LIVE BUY ..." confirmation again
+
+
+def test_saving_a_plan_records_its_first_day(client):
+    _assets(client)
+    assert client.put("/api/invest", json={"plan": PLAN}, headers=WRITE).status_code == 200
+    assert load_config(client.path).invest.start   # so missed days before it are never caught up

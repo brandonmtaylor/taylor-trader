@@ -46,7 +46,8 @@ class Executor:
         if self.journal:
             self.journal.record_order(mode=self.mode, **kw)
 
-    def enter(self, sc: StrategyConfig, symbol: str, price: float, reason: str) -> EntryPlan:
+    def enter(self, sc: StrategyConfig, symbol: str, price: float, reason: str,
+              client_order_id: str | None = None) -> EntryPlan:
         account = self.broker.snapshot()
         base = max(0.0, account.equity - self.reserved(account))  # the trading slice
         intent = plan_entry(sc, symbol, price, base, reason)
@@ -74,8 +75,12 @@ class Executor:
             return EntryPlan(intent, decision, False)
 
         try:
-            order = self.broker.submit_entry(intent)
+            order = self.broker.submit_entry(intent, client_order_id)
         except Exception as e:
+            if client_order_id and "client_order_id" in str(e).lower():
+                # Alpaca already has this exact order (placed before a restart, or a retried request).
+                log.info("%s %s: already placed (%s)", symbol, sc.name, client_order_id)
+                return EntryPlan(intent, decision, False)
             self._record(status="failed", detail=str(e), **common)
             self.alerts.send(f"Buy FAILED: {symbol}", str(e), Level.WARNING)
             raise

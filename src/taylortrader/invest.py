@@ -60,22 +60,37 @@ EXAMPLES = [
 
 def due_period(inv: InvestConfig, today: date) -> str | None:
     """The contribution period that's due on `today`, or None. A period is due from its day
-    onward until the next one starts, so a missed day (weekend, holiday, Mac asleep) catches up."""
-    if inv.start and today < date.fromisoformat(inv.start):
+    onward until the next one's day, so a missed day (weekend, holiday, Mac asleep) catches up,
+    even across a month or week boundary (day 28 on a Saturday is bought on the next Monday).
+    The previous period only counts if the plan had started before the current period began."""
+    start = date.fromisoformat(inv.start) if inv.start else None
+    if start and today < start:
         return None
     if inv.until and today > date.fromisoformat(inv.until):
         return None
     if inv.every == "once":
-        return "once"
+        return f"once-{inv.start}" if inv.start else "once"  # a new start date is a new lump sum
     if inv.every == "month":
-        return f"{today:%Y-%m}" if today.day >= inv.day else None
+        if today.day >= inv.day:
+            return f"{today:%Y-%m}"
+        first = today.replace(day=1)
+        return f"{first - timedelta(days=1):%Y-%m}" if start and start < first else None
     if inv.every == "week":
         monday = today - timedelta(days=today.weekday())
-        return f"week-{monday}" if today.weekday() >= inv.day else None
+        if today.weekday() >= inv.day:
+            return f"week-{monday}"
+        return f"week-{monday - timedelta(days=7)}" if start and start < monday else None
     if inv.every == "2weeks":
         first = EPOCH + timedelta(days=(today - EPOCH).days // 14 * 14)
-        return f"2weeks-{first}" if today >= first + timedelta(days=inv.day) else None
+        if today >= first + timedelta(days=inv.day):
+            return f"2weeks-{first}"
+        return f"2weeks-{first - timedelta(days=14)}" if start and start < first else None
     raise ValueError(f"unknown schedule {inv.every!r}")
+
+
+def cents(v: float) -> float:
+    """Round down to whole cents, without float noise turning $4.35 into $4.34."""
+    return math.floor(v * 100 + 1e-6) / 100
 
 
 def next_due(inv: InvestConfig, today: date, done: set[str]) -> tuple[date, str] | None:
@@ -109,13 +124,12 @@ def split(amount: float, values: dict[str, float], weights: dict[str, float]) ->
     gap_sum = sum(gaps.values())  # >= amount: the shortfalls add up to at least the new money
     raw = {s: amount * g / gap_sum for s, g in gaps.items()} if gap_sum > 0 else \
         {s: amount * w / total_w for s, w in weights.items()}
-    cents = {s: math.floor(v * 100) / 100 for s, v in raw.items()}
-    small = {s for s, v in cents.items() if v < MIN_ORDER}
-    out = {s: v for s, v in cents.items() if s not in small}
+    whole = {s: cents(v) for s, v in raw.items()}
+    out = {s: v for s, v in whole.items() if v >= MIN_ORDER}
     if not out:
-        return {max(raw, key=raw.get): math.floor(amount * 100) / 100}
+        return {max(raw, key=raw.get): cents(amount)}
     biggest = max(out, key=out.get)
-    out[biggest] = round(out[biggest] + (math.floor(amount * 100) / 100 - sum(out.values())), 2)
+    out[biggest] = round(out[biggest] + (cents(amount) - sum(out.values())), 2)
     return out
 
 
@@ -204,7 +218,7 @@ class InvestRunner:
                                  "nothing was bought.", Level.WARNING, key=f"invest-assets:{today}")
                 return
             available = inv.amount if mode == "preview" else min(inv.amount, snap.cash)
-            available = math.floor(available * 100) / 100
+            available = cents(available)
             if available < MIN_ORDER:
                 self.alerts.send("Invest plan: no cash", f"The {period} contribution of ${inv.amount:,.2f} is due, "
                                  f"but there's ${snap.cash:,.2f} cash. Deposit money at Alpaca; it'll try again "
@@ -214,7 +228,9 @@ class InvestRunner:
             self.journal.plan_invest(period, mode, alloc, planned_total=inv.amount)
             rows = self.journal.invest_rows(period, mode)
 
-        todo = [r for r in rows if r["status"] == "planned" or (r["status"] == "failed" and r["attempts"] < MAX_ATTEMPTS)]
+        # "blocked" is retried too: a kill switch or a cash dip shouldn't lose the period's buy.
+        todo = [r for r in rows if r["status"] in ("planned", "blocked")
+                or (r["status"] == "failed" and r["attempts"] < MAX_ATTEMPTS)]
         if not todo:
             return
         spent = 0.0
@@ -256,7 +272,15 @@ class InvestRunner:
         try:
             order = self.broker.submit_notional_buy(symbol, notional, cid)
         except Exception as e:  # noqa: BLE001 - maybe it got through anyway (a timeout): look before retrying
-            order = self._find(cid)
+            order, checked = self._find(cid)
+            if order is None and not checked:
+                # Can't tell whether it went through. Keep the same order id for the next try, so if
+                # it did, Alpaca refuses the duplicate instead of buying twice.
+                self.journal.invest_mark(r["id"], "failed", f"unconfirmed: {str(e)[:280]}")
+                self.alerts.send(f"Invest plan: {symbol} buy unconfirmed", f"{e}\nCouldn't check with Alpaca "
+                                 "whether it went through. It'll check again with the same order id, so it "
+                                 "can't buy twice.", Level.WARNING, key=f"invest-unconfirmed:{period}:{symbol}")
+                return False
             if order is None:
                 self.journal.invest_mark(r["id"], "failed", str(e)[:300], attempt=True)
                 left = MAX_ATTEMPTS - r["attempts"] - 1
@@ -270,10 +294,11 @@ class InvestRunner:
         return True
 
     def _find(self, cid: str):
+        """(order or None, whether Alpaca actually answered). None + False means "couldn't check"."""
         try:
-            return self.broker.order_by_client_id(cid)
+            return self.broker.order_by_client_id(cid), True
         except Exception:  # noqa: BLE001
-            return None
+            return None, False
 
     def status(self, snap) -> dict:
         """For the daily email, the dashboard and MCP."""
@@ -289,7 +314,7 @@ class InvestRunner:
             amount = inv.amount if mode == "preview" else min(inv.amount, snap.cash)
             upcoming = {"date": nxt[0].isoformat(), "period": nxt[1], "amount": inv.amount,
                         "cash_short": mode != "preview" and snap.cash + 0.005 < inv.amount,
-                        "split": split(math.floor(amount * 100) / 100, values, inv.weights)}
+                        "split": split(cents(amount), values, inv.weights)}
         put_in = self.journal.invest_put_in(mode) if mode != "preview" else 0.0
         return {
             "enabled": inv.enabled, "preview": mode == "preview", "mode": mode, "amount": inv.amount,

@@ -180,7 +180,7 @@ class AlpacaBroker:
 
     # --- writes (only reached through Executor, which runs guardrails first) --------------------
 
-    def submit_entry(self, intent: OrderIntent):
+    def submit_entry(self, intent: OrderIntent, client_order_id: str | None = None):
         if intent.side is not Side.BUY:
             raise BrokerError("submit_entry only opens long positions")
         if intent.stop_loss_price is None:
@@ -204,6 +204,7 @@ class AlpacaBroker:
             order_class=order_class,
             stop_loss=stop,
             take_profit=tp,
+            client_order_id=client_order_id[:128] if client_order_id else None,
         )
         log.info("[%s] BUY %s x%d, stop %.2f (%s)", self.mode, intent.symbol, qty, stop.stop_price, intent.reason)
         return self._client.submit_order(req)
@@ -212,7 +213,7 @@ class AlpacaBroker:
         """An invest plan buy: $notional of symbol, fractional shares, no stop. Only reached through
         InvestRunner, which runs the investing guardrails first. Alpaca rejects a repeated
         client_order_id, which is what makes a plan buy impossible to place twice."""
-        amount = math.floor(notional * 100) / 100  # Alpaca takes whole cents
+        amount = round(notional, 2)  # Alpaca takes whole cents; callers already rounded down
         if amount < 1:
             raise BrokerError(f"{symbol}: ${notional:.2f} is under the $1 minimum")
         req = MarketOrderRequest(symbol=symbol, notional=amount, side=OrderSide.BUY,
@@ -255,6 +256,10 @@ class AlpacaBroker:
                     self._client.cancel_order_by_id(o.id)
                 except Exception as e:  # noqa: BLE001  leg may already be gone; never block an exit
                     log.warning("cancel %s order %s failed: %s", symbol, o.id, e)
+        # Cancels are asynchronous: wait until the stop releases the shares, or the close is refused.
+        deadline = time.monotonic() + 5.0
+        while any(o.symbol == symbol for o in self.open_orders()) and time.monotonic() < deadline:
+            time.sleep(0.25)
         log.info("[%s] SELL all %s (%s)", self.mode, symbol, reason)
         return self._client.close_position(symbol)
 

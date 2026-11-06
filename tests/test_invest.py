@@ -342,3 +342,53 @@ def test_next_buy_after_the_close_is_the_next_open_day(tmp_path):
     s = make(tmp_path, now=evening)
     assert s.invest.status(s.broker.snapshot())["next"]["date"] == "2026-11-05"
     assert make(tmp_path / "b").invest.status(s.broker.snapshot())["next"]["date"] == "2026-11-04"
+
+
+# --- review fixes (2026-11-06) ---------------------------------------------------------------------
+
+def test_a_missed_day_catches_up_across_the_boundary_only_after_the_plan_started():
+    feb28_saturday = plan(day=28, start="2026-01-01")
+    assert invest.due_period(feb28_saturday, date(2026, 3, 2)) == "2026-02"       # bought on Monday
+    assert invest.due_period(plan(day=28, start="2026-03-01"), date(2026, 3, 2)) is None  # plan began after
+    assert invest.due_period(plan(day=28), date(2026, 3, 2)) is None               # no start: no catch-up
+    friday = plan(every="week", day=4, start="2026-01-01")
+    assert invest.due_period(friday, date(2026, 12, 28)) == "week-2026-12-21"      # Christmas Friday
+    two = plan(every="2weeks", day=4, start="2026-01-01")
+    p = invest.due_period(two, date(2026, 11, 2))
+    assert p and p.startswith("2weeks-")
+
+
+def test_a_new_lump_sum_is_a_new_period():
+    assert invest.due_period(plan(every="once", start="2026-11-01"), date(2026, 11, 2)) == "once-2026-11-01"
+    assert invest.due_period(plan(every="once", start="2027-11-01"), date(2027, 11, 2)) == "once-2027-11-01"
+
+
+def test_cents_dont_lose_a_penny_to_float_noise():
+    assert invest.cents(4.35) == 4.35 and invest.cents(0.29) == 0.29 and invest.cents(1.999) == 1.99
+    assert sum(invest.split(4.35, {}, {"VTI": 100}).values()) == 4.35
+
+
+def test_an_unconfirmed_buy_is_retried_with_the_same_order_id(tmp_path):
+    s = make(tmp_path)
+    s.broker.fail_next = "timeout-but-placed"     # Alpaca got it, the reply was lost...
+    real_lookup = s.broker.order_by_client_id
+
+    def lookup_down(cid):                            # ...and the check fails too
+        s.broker.order_by_client_id = real_lookup
+        raise ConnectionError("network down")
+
+    s.broker.order_by_client_id = lookup_down
+    s.tick()
+    s.tick()
+    assert len(s.broker.notional_buys) == 3          # never twice
+    assert all(cid.endswith("-1") for cid in s.broker.by_cid)
+    assert all(r["status"] == "submitted" for r in s.journal.invest_rows("2026-11", "paper"))
+
+
+def test_a_blocked_buy_goes_in_once_the_block_clears(tmp_path):
+    s = make(tmp_path)
+    s.journal.plan_invest("2026-11", "paper", {"VTI": 200.0}, planned_total=200.0)
+    row = s.journal.invest_rows("2026-11", "paper")[0]
+    s.journal.invest_mark(row["id"], "blocked", "kill switch")
+    s.tick()
+    assert s.broker.notional_buys == [("VTI", 200.0)]
