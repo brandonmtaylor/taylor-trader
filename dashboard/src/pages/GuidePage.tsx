@@ -57,7 +57,8 @@ const SECTIONS: { id: string; title: string; body: ReactNode }[] = [
       <ul>
         <li><b>Every buy has a stop-loss</b>, placed at Alpaca, so it works even if this computer is off.</li>
         <li><b>Daily loss limit</b> (3% by default): after the account falls that much in a day, no new buys
-          until tomorrow. Sells and stop-losses keep working. This is why you may see "blocked" buys on a bad day.</li>
+          until tomorrow. Sells and stop-losses keep working. This is why you may see "blocked" buys on a bad day.
+          Deposits and withdrawals don't count as gains or losses.</li>
         <li><b>Position limits</b>: no single stock can take more than its share of the account, and there's a
           cap on trades per day. Some limits are fixed in the code and can't be loosened from settings.</li>
         <li><b>Pause new buys</b> (the switch at the top) stops all buying at once. Selling still works.</li>

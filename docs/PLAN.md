@@ -93,12 +93,11 @@ stop, alerts reach my phone, and paper results roughly match the backtest for th
   strategy goes live when it passes `taylortrader search` on a list chosen without hindsight (beats
   buy-and-hold on the holdout and beats random entries), or deliberately as a small, labeled
   experiment. Strategies that haven't passed stay on paper; they aren't removed
-- Decide position sizing first. On paper, each strategy gets 50% of the account with a 12% stop, so
-  one stopped trade loses ~6% of the account: double the 3% daily loss limit, which therefore blocks
-  new buys every day a stop fires (first seen 2026-11-05: VRT stopped out, two rebuys blocked). The
-  usual shape is ~1-2% of the account at risk per trade and a 3-5% daily limit, e.g. 25% allocation
-  with an 8% stop. Pick one: smaller positions/tighter stops, a higher daily limit, or keep "a stop
-  fired, no more buying today" on purpose
+- Position sizing: paper moved to 25% of the account with an 8% stop on 2026-11-06, about 2% at risk
+  per trade under the 3% daily loss limit. Before that, 50% with a 12% stop lost ~6% per stop, double
+  the limit, so every stop blocked buying for the day (first seen 2026-11-05: VRT stopped out, two
+  rebuys blocked)
+- ✅ Daily loss limit ignores deposits and withdrawals (Alpaca account activities since the last close)
 
 ### What the tests found (2026-11-05/06)
 The honest tools (replay, search with a holdout, the luck test) were pointed at the strategies

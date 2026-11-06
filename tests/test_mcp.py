@@ -158,3 +158,18 @@ def test_claude_can_add_a_strategy_on_a_live_account_within_the_limits(server):
     with pytest.raises(RuntimeError):  # past the stop-loss limit: refused, same as the dashboard
         call(server, "add_strategy", name="rule", symbols=["MSFT"], stop_loss_pct=99)
     assert len(load_config(c.path).strategies) == 2
+
+
+def test_an_idea_gets_the_honest_test(server, monkeypatch):
+    from taylortrader import search
+    from tests.test_search import _bars
+
+    monkeypatch.setattr(search, "load_frames", lambda md, symbols, tf, days, say: {"AAA": _bars(900), "BBB": _bars(900)})
+    out = call(server, "test_strategy_idea", buy_when="rsi < 45", sell_when="rsi > 55")
+    assert out["verdict"] and out["holdout"]["trades"] > 0 and out["luck"]["runs"] == 100
+    assert "symbols" not in out["older_data"] and out["stocks"] == 2
+
+
+def test_an_idea_it_cant_read_is_refused(server):
+    with pytest.raises(RuntimeError, match="unknown name"):
+        call(server, "test_strategy_idea", buy_when="earnings > 0")

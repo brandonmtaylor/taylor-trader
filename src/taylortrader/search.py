@@ -24,7 +24,7 @@ import json
 import math
 import statistics
 from dataclasses import asdict, dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import numpy as np
@@ -77,6 +77,33 @@ def default_grid(stops=STOPS) -> list[Candidate]:
     grid = [Candidate(name, {}, s) for name in BUILTINS for s in stops]
     grid += [Candidate("rule", {"buy_when": b, "sell_when": x}, s) for b, x in RULES for s in stops]
     return grid
+
+
+def load_frames(md, symbols, timeframe: str, days: int, say=print) -> dict[str, pd.DataFrame]:
+    """Daily or intraday bars per symbol, leaving out any with too little history. Says what it left out."""
+    start = datetime.now(UTC) - timedelta(days=days)
+    frames = {}
+    for sym in symbols:
+        try:
+            df = md.bars(sym, timeframe, start)
+        except Exception as e:  # noqa: BLE001 - one bad symbol shouldn't stop the search
+            say(f"  skipping {sym}: {e}")
+            continue
+        if len(df) < 400:
+            say(f"  skipping {sym}: only {len(df)} bars")
+            continue
+        frames[sym] = df
+    if not frames:
+        return frames
+    # A stock that stopped trading (bought out, delisted) would end early and get its own holdout dates.
+    # It's dropped and named, since dropping a stock that ended badly flatters buy-and-hold.
+    last = max(df.index[-1] for df in frames.values())
+    ended = [s for s, df in frames.items() if (last - df.index[-1]).days > 10]
+    for s in ended:
+        say(f"  dropping {s}: its data ends {frames[s].index[-1].date()} (stopped trading?). Keep this in mind: "
+            "dropping stocks that ended makes holding look better than it was.")
+        del frames[s]
+    return frames
 
 
 # --- running one candidate ---------------------------------------------------------------------------

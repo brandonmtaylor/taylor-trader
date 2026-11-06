@@ -1,3 +1,6 @@
+from datetime import date
+from types import SimpleNamespace
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -126,3 +129,51 @@ def test_idle_cash_earns_interest_when_asked():
     assert flat.total_return_pct == 0
     days = (idx[-1] - idx[never.warmup]).days
     assert abs(paid.total_return_pct - ((1.04 ** (days / 365.25)) - 1) * 100) < 0.01
+
+
+class FlowClient:
+    def __init__(self, rows):
+        self.rows, self.gets = rows, 0
+        self.account = SimpleNamespace(equity="1100", cash="1100", last_equity="1000")
+
+    def get_calendar(self, req):
+        return [SimpleNamespace(date=date(2026, 11, 5))]
+
+    def get(self, path, data):
+        self.gets += 1
+        if isinstance(self.rows, Exception):
+            raise self.rows
+        return self.rows
+
+    def get_account(self):
+        return self.account
+
+
+def _flow_broker(rows):
+    b = AlpacaBroker.__new__(AlpacaBroker)
+    b.paper, b._client, b._cash_moved, b._last_session = True, FlowClient(rows), (0.0, 0.0), None
+    b.positions = dict
+    b.trades_today = lambda: 0
+    return b
+
+
+def test_a_deposit_doesnt_hide_a_loss_and_a_withdrawal_isnt_one():
+    deposit = [{"date": "2026-11-06", "net_amount": "150.00"}]
+    snap = _flow_broker(deposit).snapshot()
+    assert snap.day_start_equity == 1150 and snap.day_pnl_pct < 0  # $1,000 + $150 in, worth $1,100: a loss
+    withdrawal = [{"date": "2026-11-06", "net_amount": "-200"}]
+    assert _flow_broker(withdrawal).snapshot().day_start_equity == 800
+
+
+def test_money_moved_before_the_last_close_is_already_in_the_start():
+    assert _flow_broker([{"date": "2026-11-05", "net_amount": "500"}]).snapshot().day_start_equity == 1000
+
+
+def test_cash_moved_is_checked_every_few_minutes_and_survives_a_failure():
+    b = _flow_broker([{"date": "2026-11-06", "net_amount": "50"}])
+    assert b.cash_moved_today() == 50 and b.cash_moved_today() == 50
+    assert b._client.gets == 1
+    b._cash_moved = (1.0, 50.0)  # long ago
+    b._client.rows = ConnectionError("down")
+    assert b.cash_moved_today() == 50
+    assert _flow_broker(ConnectionError("down")).snapshot().day_start_equity == 1000

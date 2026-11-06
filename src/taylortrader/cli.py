@@ -272,29 +272,10 @@ def cmd_search(args) -> int:
         symbols = [s.upper() for s in args.symbols] or sorted({s for sc in cfg.strategies for s in sc.symbols})
     creds = load_alpaca_credentials("paper")  # data only
     md = MarketData(creds, cfg.data_dir / "cache", feed=args.feed or ("sip" if cfg.feed == "yahoo" else cfg.feed))
-    start = datetime.now(UTC) - timedelta(days=args.days)
-    frames = {}
-    for sym in symbols:
-        try:
-            df = md.bars(sym, args.timeframe, start)
-        except Exception as e:  # noqa: BLE001 - one bad symbol shouldn't stop the search
-            print(f"  skipping {sym}: {e}")
-            continue
-        if len(df) < 400:
-            print(f"  skipping {sym}: only {len(df)} bars")
-            continue
-        frames[sym] = df
+    frames = search.load_frames(md, symbols, args.timeframe, args.days)
     if not frames:
         print("error: no symbol had enough history", file=sys.stderr)
         return 2
-    # A stock that stopped trading (bought out, delisted) would end early and get its own holdout dates.
-    # It's dropped and named, since dropping a stock that ended badly flatters buy-and-hold.
-    last = max(df.index[-1] for df in frames.values())
-    ended = [s for s, df in frames.items() if (last - df.index[-1]).days > 10]
-    for s in ended:
-        print(f"  dropping {s}: its data ends {frames[s].index[-1].date()} (stopped trading?). Keep this in mind: "
-              "dropping stocks that ended makes holding look better than it was.")
-        del frames[s]
     grid = search.default_grid(stops)
     print(f"{', '.join(frames)} {args.timeframe}, last {args.days} days. Trying {len(grid)} candidates on the "
           f"older {100 - args.holdout:g}%, then the winner once on the newest {args.holdout:g}%.")

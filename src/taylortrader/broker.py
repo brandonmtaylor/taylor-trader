@@ -11,11 +11,13 @@ from __future__ import annotations
 import logging
 import math
 import time
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
+from zoneinfo import ZoneInfo
 
 from alpaca.trading.client import TradingClient
 from alpaca.trading.enums import OrderClass, OrderSide, OrderType, QueryOrderStatus, TimeInForce
 from alpaca.trading.requests import (
+    GetCalendarRequest,
     GetOrdersRequest,
     GetPortfolioHistoryRequest,
     MarketOrderRequest,
@@ -28,6 +30,11 @@ from guardrails import AccountSnapshot, OrderIntent, Position, Side
 from taylortrader.secrets import AlpacaCredentials
 
 log = logging.getLogger(__name__)
+
+NY = ZoneInfo("America/New_York")
+# Money moved in or out, as opposed to made or lost: cash deposits, withdrawals, journals, transfers.
+CASH_FLOWS = "CSD,CSW,JNLC,ACATC"
+CASH_FLOW_TTL_S = 300
 
 _STOP_TYPES = {OrderType.STOP, OrderType.STOP_LIMIT, OrderType.TRAILING_STOP}
 
@@ -65,6 +72,8 @@ def _price(p: float) -> float:
 class AlpacaBroker:
     def __init__(self, creds: AlpacaCredentials):
         self.paper = creds.paper
+        self._cash_moved = (0.0, 0.0)  # (when checked, amount)
+        self._last_session: tuple[date, date] | None = None  # (asked on, answer)
         self._client = with_timeout(TradingClient(
             creds.key_id.get_secret_value(), creds.secret_key.get_secret_value(), paper=creds.paper
         ))
@@ -128,6 +137,32 @@ class AlpacaBroker:
         return {o.symbol for o in orders
                 if o.side == OrderSide.SELL and o.order_type in (OrderType.MARKET, OrderType.LIMIT)}
 
+    def _session_before(self, today: date) -> date:
+        """The last trading day before today: what Alpaca's last_equity is measured at."""
+        if self._last_session and self._last_session[0] == today:
+            return self._last_session[1]
+        days = self._client.get_calendar(GetCalendarRequest(start=today - timedelta(days=10), end=today - timedelta(days=1)))
+        self._last_session = (today, days[-1].date)
+        return days[-1].date
+
+    def cash_moved_today(self) -> float:
+        """Net deposits (+) and withdrawals (-) since the last close. Checked every few minutes. If the
+        check fails, the last answer stands: the daily loss limit keeps working, a little less exactly."""
+        checked, amount = self._cash_moved
+        if time.monotonic() - checked < CASH_FLOW_TTL_S and checked:
+            return amount
+        try:
+            today = datetime.now(NY).date()
+            since = self._session_before(today)
+            rows = self._client.get("/account/activities", {"activity_types": CASH_FLOWS, "after": since.isoformat()})
+            moved = [r for r in rows if str(r.get("date", ""))[:10] > since.isoformat()]
+            amount = sum(-abs(float(r.get("net_amount") or 0)) if r.get("activity_type") == "CSW"
+                         else float(r.get("net_amount") or 0) for r in moved)
+        except Exception as e:  # noqa: BLE001 - a side check must never stop the account read
+            log.warning("couldn't check deposits and withdrawals: %s", e)
+        self._cash_moved = (time.monotonic(), amount)
+        return amount
+
     def trades_today(self) -> int:
         start = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
         orders = self._client.get_orders(
@@ -172,8 +207,9 @@ class AlpacaBroker:
         return AccountSnapshot(
             equity=float(a.equity),
             cash=float(a.cash),
-            # last_equity = equity at the previous trading day's close
-            day_start_equity=float(a.last_equity or a.equity),
+            # last_equity = equity at the previous trading day's close. Money moved since then isn't
+            # a gain or loss, so it counts as if it had been there at the start of the day.
+            day_start_equity=float(a.last_equity or a.equity) + self.cash_moved_today(),
             positions=self.positions(),
             trades_today=self.trades_today(),
         )

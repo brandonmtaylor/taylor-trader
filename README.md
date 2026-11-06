@@ -183,6 +183,8 @@ on NVDA hourly", "pause new buys".
 claude mcp add taylortrader --scope user -- uv --directory /path/to/taylor-trader run taylortrader mcp
 ```
 
+Ask it to test an idea properly and it runs the holdout and luck test on a fixed list of stocks.
+
 It can also read the AI report card ("how often is the AI right?") and how well each trade was
 timed ("did we sell VRT too early?").
 
