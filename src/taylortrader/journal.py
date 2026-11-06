@@ -121,6 +121,15 @@ class Journal:
         )
         return cur.lastrowid
 
+    def sold_since(self, symbol: str, cutoff_iso: str) -> bool:
+        """Did the bot (or the dashboard) sell this symbol recently? Recent means placed since the
+        cutoff, still waiting, or filled since the cutoff (a sell sent after hours fills at the open).
+        fill_ts and ts are formatted differently, so compare them as datetimes."""
+        return self.db.execute(
+            "SELECT 1 FROM orders WHERE symbol=? AND side='sell' AND (ts >= ? OR status='submitted'"
+            " OR (fill_ts IS NOT NULL AND datetime(fill_ts) >= datetime(?)))",
+            (symbol, cutoff_iso, cutoff_iso)).fetchone() is not None
+
     def pending_orders(self) -> list[sqlite3.Row]:
         return list(self.db.execute(
             "SELECT * FROM orders WHERE status = 'submitted' AND broker_order_id IS NOT NULL"))

@@ -102,6 +102,7 @@ class Service:
         self.owner: dict[str, StrategyConfig] = {s: sc for sc in self.cfg.enabled_strategies for s in sc.symbols}
         self.last_bar: dict[tuple[str, str], pd.Timestamp] = {}
         self.known_positions: dict[str, float] = {}
+        self.known_entry: dict[str, float] = {}  # average buy price per symbol, for "made/lost" in alerts
         self.kill_on = False
         self.errors = 0
         self.summary_date = None
@@ -271,8 +272,12 @@ class Service:
                 if row["strategy"] == "invest":
                     continue  # the plan already said what it bought; three "filled" pings is noise
                 stop = f", stop ${row['stop_price']:,.2f}" if row["stop_price"] else ""
+                qty = float(order.filled_qty)
+                result = ""
+                if row["side"] == "sell":
+                    result = "\n" + (self._result(row["symbol"], qty, px) or "")
                 self.alerts.send(f"Filled: {row['side'].upper()} {row['symbol']}",
-                                 f"{float(order.filled_qty):g} @ ${px:,.2f}{stop}\n{row['reason']}")
+                                 f"{qty:g} @ ${px:,.2f}{stop}{result.rstrip()}\n{row['reason']}")
             elif status in ("canceled", "expired", "rejected"):
                 self.journal.mark_status(row["id"], status)
                 self.alerts.send(f"Order {status}: {row['side']} {row['symbol']}", row["reason"] or "",
@@ -286,15 +291,11 @@ class Service:
         # dashboard after hours, filled at the open), so look at fill times as well as order times.
         cutoff = self.now() - timedelta(hours=2)
         for symbol in set(self.known_positions) - set(held):
-            if not self.journal.db.execute(
-                "SELECT 1 FROM orders WHERE symbol=? AND side='sell' AND (ts >= ? OR status='submitted'"
-                " OR (fill_ts IS NOT NULL AND datetime(fill_ts) >= datetime(?)))",
-                (symbol, cutoff.isoformat(), cutoff.isoformat()),
-            ).fetchone():
+            if not self.journal.sold_since(symbol, cutoff.isoformat()):
                 self.journal.event("stop_hit", f"{symbol} position closed at the broker (stop or take-profit)")
-                self.alerts.send(f"Position closed: {symbol}", "Closed at Alpaca by its stop-loss or take-profit "
-                                 "order.", Level.WARNING)
+                self.alerts.send(f"Position closed: {symbol}", self._closed_at_broker(symbol), Level.WARNING)
         self.known_positions = held
+        self.known_entry = {s: p.avg_entry_price for s, p in snap.positions.items()}
 
         stops = self.broker.symbols_with_stop()
         # A position with a sell already waiting (e.g. sold from the dashboard after hours) had its
@@ -317,6 +318,30 @@ class Service:
                 self.alerts.send(f"Unmanaged position: {symbol}", "; ".join(issues) +
                                  ". TaylorTrader won't touch it; add it to a strategy or manage it yourself.",
                                  Level.WARNING, key=f"unmanaged:{symbol}:{today}")
+
+    def _result(self, symbol: str, qty: float, price: float) -> str | None:
+        """'+$12.40 (+3.1%) vs. the $398.20 buy', from the position's average buy price."""
+        entry = self.known_entry.get(symbol)
+        if not entry or not qty:
+            return None
+        pnl = (price - entry) * qty
+        sign = "+" if pnl >= 0 else "−"
+        return f"{sign}${abs(pnl):,.2f} ({sign}{abs(price / entry - 1) * 100:.1f}%) vs. the ${entry:,.2f} buy"
+
+    def _closed_at_broker(self, symbol: str) -> str:
+        """What a stop-loss or take-profit at Alpaca did: shares, price, and what it made or lost."""
+        try:
+            sells = [f for f in self.broker.fills(days=3) if f.symbol == symbol and f.side == "sell"]
+        except Exception as e:  # noqa: BLE001 - the alert goes out without the details
+            log.warning("fills for %s unavailable: %s", symbol, e)
+            sells = []
+        if not sells:
+            return "Closed at Alpaca by its stop-loss or take-profit order."
+        last = max(sells, key=lambda f: f.ts)
+        entry = self.known_entry.get(symbol)
+        which = "stop-loss" if entry and last.price < entry else "take-profit" if entry else "stop-loss or take-profit"
+        result = self._result(symbol, last.qty, last.price)
+        return f"Sold {last.qty:g} @ ${last.price:,.2f} by its {which} at Alpaca." + (f"\n{result}" if result else "")
 
     def _protect(self, sc: StrategyConfig, pos) -> None:
         """A position a strategy owns has no stop. Recreate it, or exit if the stop level is already breached."""

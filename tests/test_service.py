@@ -222,6 +222,33 @@ def test_broker_side_stop_hit_is_reported(svc):
     assert any("Position closed: VRT" in t for t in svc.rec.titles())
 
 
+def test_stop_hit_alert_says_the_price_and_what_it_lost(svc):
+    from taylortrader.stats import Fill
+
+    svc.broker.positions["VRT"] = Position("VRT", 4, 808, 206.44)
+    svc.broker.stops.add("VRT")
+    svc.tick()
+    del svc.broker.positions["VRT"]
+    svc.broker.fills = lambda days=365: [Fill(NOW, "VRT", "sell", 4.0, 193.72, "s1")]
+    svc.tick()
+    msg = next(m for t, m, _ in svc.rec.sent if t == "Position closed: VRT")
+    assert "Sold 4 @ $193.72 by its stop-loss" in msg
+    assert "−$50.88 (−6.2%) vs. the $206.44 buy" in msg
+
+
+def test_sell_fill_alert_says_what_it_made(svc):
+    svc.broker.positions["VRT"] = Position("VRT", 10, 1100, 100)
+    svc.broker.stops.add("VRT")
+    svc.tick()
+    svc.journal.record_order(mode="paper", strategy="test_signal", symbol="VRT", side="sell", status="submitted",
+                             qty=10, broker_order_id="c9")
+    svc.broker.order_status["c9"] = SimpleNamespace(status="filled", filled_avg_price="112.5",
+                                                     filled_at="2026-11-04T15:05:00Z", filled_qty="10")
+    svc.check_fills()
+    msg = next(m for t, m, _ in svc.rec.sent if t == "Filled: SELL VRT")
+    assert "+$125.00 (+12.5%) vs. the $100.00 buy" in msg
+
+
 def test_after_hours_sale_filling_at_the_open_is_not_a_stop_hit(svc):
     # Sold from the dashboard at night; the market order only fills at the open, hours later.
     svc.broker.positions["AAPL"] = Position("AAPL", 1, 328, 300)
