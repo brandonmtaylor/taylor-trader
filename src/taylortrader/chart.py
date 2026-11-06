@@ -113,7 +113,7 @@ def build(symbol: str, period: str, df: pd.DataFrame, fills: list[Fill], strateg
     position = None
     if held_qty > 0:
         buys = [f for f in mine if f.side == "buy"]
-        last_buy = buys[-1] if buys else None
+        last_buy = max(buys, key=lambda f: f.ts, default=None)  # fills can arrive newest first
         last = float(df["close"].iloc[-1]) if not df.empty else None
         entry = last_buy.price if last_buy else None
         since = df[df.index >= _bar_start(df, last_buy.ts)] if (last_buy and not df.empty) else df.iloc[0:0]

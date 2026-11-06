@@ -5,7 +5,8 @@ stock is disguised before the model sees it:
 - the ticker becomes "Stock A", "Stock B", ...
 - prices are multiplied by a random factor and volume by another (RSI, Chaikin and the shape of
   every chart are unchanged; the price levels a model could recognize are gone)
-- dates move forward a whole number of years' worth of weeks, so weekdays stay weekdays
+- dates move forward a whole number of years' worth of weeks, so weekdays stay weekdays and the
+  clock time in New York stays the same
 - no news (there's no honest way to replay it), so this tests the AI on price data alone
 
 Each disguised prompt goes through the same prompt builder and model as the live strategy, and
@@ -13,6 +14,10 @@ answers are graded exactly like the live report card (grading.py). Only buy ques
 replayed: sell questions depend on a position the replay never really held.
 
 Answers are saved as they arrive, so a run can be stopped and resumed without asking again.
+
+A rule with an absolute price level (close > 50) doesn't replay faithfully: rules are checked on the
+disguised prices, so the level means something different for each stock. Compare prices with each
+other (close > ma_200) or use ratios like RSI instead.
 """
 
 from __future__ import annotations
@@ -39,6 +44,7 @@ log = logging.getLogger(__name__)
 # Columns measured in dollars, scaled with the price. RSI and Chaikin are ratios and stay as they are.
 PRICE_COLS = ("open", "high", "low", "close", "ma_20", "ma_200", "macd", "macd_signal", "macd_diff")
 SHIFT = timedelta(weeks=52 * 20)   # ~20 years ahead; whole weeks keep the weekday
+NY = "America/New_York"
 WARMUP = 200                      # bars before the first question, so the 200-bar average exists
 
 
@@ -66,8 +72,22 @@ def disguise(df: pd.DataFrame, rng: random.Random) -> pd.DataFrame:
     cols = [c for c in PRICE_COLS if c in out.columns]
     out[cols] = out[cols] * price_k
     out["volume"] = (out["volume"] * rng.uniform(0.3, 3.0)).round()
-    out.index = out.index + SHIFT
+    # Shifted on the New York clock: the same shift in UTC lands on the other side of a daylight
+    # saving change some weeks, and 10:00 would show as 9:00 or 11:00. Stocks only trade on weekdays,
+    # which never hit the hour a clock change skips or repeats.
+    local = out.index.tz_convert(NY).tz_localize(None) + SHIFT
+    out.index = local.tz_localize(NY).tz_convert(out.index.tz)
     return out
+
+
+def _alias(n: int) -> str:
+    """Stock A ... Stock Z, then Stock AA, AB, ..."""
+    letters = ""
+    n += 1
+    while n:
+        n, r = divmod(n - 1, 26)
+        letters = chr(ord("A") + r) + letters
+    return f"Stock {letters}"
 
 
 def questions(frames: dict[str, pd.DataFrame], strategy: AIStrategy, *, bar: timedelta, gap: int,
@@ -78,10 +98,10 @@ def questions(frames: dict[str, pd.DataFrame], strategy: AIStrategy, *, bar: tim
     rule = strategy._entry_rule
     picked: list[tuple[str, str, pd.DataFrame, int]] = []
     for n, (symbol, real) in enumerate(sorted(frames.items())):
-        alias = f"Stock {chr(ord('A') + n)}"
+        alias = _alias(n)
         fake = disguise(real, rng)
         rows = fake.to_dict("records")
-        last = len(fake) - 1 - grading.HORIZON_BARS
+        last = len(fake) - 1 - grading.horizon_bars(bar)
         next_ok = WARMUP
         for i in range(WARMUP, last + 1):
             if i < next_ok:
@@ -146,7 +166,8 @@ def ask_all(qs: list[Question], llm, answers: Answers, model: str, *, workers: i
                 on_answer(done, len(todo), a)
 
 
-def grade(qs: list[Question], answers: Answers, frames: dict[str, pd.DataFrame], min_confidence: float) -> dict:
+def grade(qs: list[Question], answers: Answers, frames: dict[str, pd.DataFrame], min_confidence: float,
+          bar: timedelta = grading.BAR) -> dict:
     """The live report card's numbers, plus how the buys the bot would really have placed did."""
     decisions = []
     for n, q in enumerate(qs):
@@ -157,8 +178,8 @@ def grade(qs: list[Question], answers: Answers, frames: dict[str, pd.DataFrame],
                           "question": "entry", "action": a["action"], "confidence": a["confidence"],
                           "acted": a["action"] == "buy" and a["confidence"] >= min_confidence,
                           "summary": a.get("summary"), "features": q.feats})
-    graded = grading.grade(decisions, frames)
-    rep = grading.report(graded)
+    graded = grading.grade(decisions, frames, bar=bar)
+    rep = grading.report(graded, bar=bar)
     done = [r for r in graded if r["verdict"] != "pending"]
     placed = [r for r in done if r["acted"]]
     rep["would_trade"] = {"n": len(placed), "avg_ret": grading._avg(r["ret"] for r in placed),

@@ -1,6 +1,6 @@
 """Grade the AI's decisions against what the price did next.
 
-Each decision is scored on the next trading day (7 hourly bars) after it was made, starting from
+Each decision is scored on the next trading day (6 hourly bars) after it was made, starting from
 the close of the last bar that had finished when the model was asked, so nothing it couldn't see
 counts in its favor. A move smaller than THRESHOLD either way is "flat": neither right nor wrong.
 
@@ -28,8 +28,8 @@ import pandas as pd
 from taylortrader import indicators
 from taylortrader.strategies.ai import FEATURES as FEATURE_KEYS
 
-HORIZON_BARS = 7        # hourly bars: about one trading day
-BAR = timedelta(hours=1)
+BAR = timedelta(hours=1)          # the live report card grades on hourly bars
+SESSION = timedelta(hours=6.5)    # a regular trading day
 THRESHOLD = 1.0         # percent
 BUCKETS = ((0.0, 0.6, "Under 60%"), (0.6, 0.7, "60–69%"), (0.7, 1.01, "70% and up"))
 
@@ -39,12 +39,22 @@ def _ts(v) -> pd.Timestamp:
     return t.tz_localize("UTC") if t.tzinfo is None else t.tz_convert("UTC")
 
 
-def outcome(df: pd.DataFrame, when, n: int = HORIZON_BARS) -> dict | None:
+def horizon_bars(bar: timedelta) -> int:
+    """Bars in one regular trading day. Rounded down on purpose: Alpaca stamps hourly bars on the
+    hour and data.regular_hours drops the 9:00 bar (it starts before 9:30), so a day is the six bars
+    from 10:00 to 15:00, and 9:30-10:00 isn't in any hourly bar."""
+    return max(1, int(SESSION / bar))
+
+
+HORIZON_BARS = horizon_bars(BAR)
+
+
+def outcome(df: pd.DataFrame, when, n: int = HORIZON_BARS, bar: timedelta = BAR) -> dict | None:
     """Price when asked, then the close, high and low over the next `n` bars. None until known."""
     if df is None or df.empty:
         return None
     t = _ts(when)
-    done = df.index + BAR <= t           # bars that had finished when the model was asked
+    done = df.index + bar <= t           # bars that had finished when the model was asked
     if not done.any():
         return None
     k = int(done.nonzero()[0][-1])
@@ -67,13 +77,13 @@ def verdict(question: str, action: str, ret: float, threshold: float = THRESHOLD
     return "right" if (ret > 0) == wants_up else "wrong"
 
 
-def recalculated(df: pd.DataFrame | None, when) -> dict | None:
+def recalculated(df: pd.DataFrame | None, when, bar: timedelta = BAR) -> dict | None:
     """Indicator values on the last finished bar, for calls saved before their values were recorded.
     Close to what the model saw, not exact: history gets revised slightly after the fact."""
     if df is None or df.empty:
         return None
     t = _ts(when)
-    done = df.index + BAR <= t
+    done = df.index + bar <= t
     if not done.any():
         return None
     k = int(done.nonzero()[0][-1])
@@ -81,13 +91,15 @@ def recalculated(df: pd.DataFrame | None, when) -> dict | None:
     return {k: round(float(v), 4) for k, v in row.items() if k in FEATURE_KEYS and pd.notna(v)}
 
 
-def grade(decisions: list[dict], bars: dict[str, pd.DataFrame], threshold: float = THRESHOLD) -> list[dict]:
-    """Every answered decision with its outcome (or verdict "pending" until the day has passed)."""
+def grade(decisions: list[dict], bars: dict[str, pd.DataFrame], threshold: float = THRESHOLD,
+          bar: timedelta = BAR) -> list[dict]:
+    """Every answered decision with its outcome (or verdict "pending" until the day has passed).
+    `bar` is the size of the bars in `bars`."""
     out = []
     for d in decisions:
         if d.get("error") or not d.get("action"):
             continue
-        o = outcome(bars.get(d["symbol"]), d["ts"])
+        o = outcome(bars.get(d["symbol"]), d["ts"], horizon_bars(bar), bar)
         row = {k: d.get(k) for k in ("id", "ts", "strategy", "symbol", "question", "action",
                                      "confidence", "acted", "summary")}
         feats = d.get("features")
@@ -95,7 +107,7 @@ def grade(decisions: list[dict], bars: dict[str, pd.DataFrame], threshold: float
             feats = json.loads(feats)
         row["features"], row["features_saved"] = feats, bool(feats)
         if not feats:
-            row["features"] = recalculated(bars.get(d["symbol"]), d["ts"])
+            row["features"] = recalculated(bars.get(d["symbol"]), d["ts"], bar)
         if o is None:
             out.append({**row, "price": None, "ret": None, "up": None, "down": None, "verdict": "pending"})
         else:
@@ -148,7 +160,9 @@ def by_indicator(done: list[dict]) -> list[dict]:
     return [{"group": g, "slices": v} for g, v in groups.items()]
 
 
-def report(graded: list[dict], threshold: float = THRESHOLD) -> dict:
+def report(graded: list[dict], threshold: float = THRESHOLD, bar: timedelta = BAR) -> dict:
+    n = horizon_bars(bar)
+    size = "hourly bar" if bar == BAR else "bar"
     done = [r for r in graded if r["verdict"] != "pending"]
     groups: dict[str, list[dict]] = defaultdict(list)
     for r in done:
@@ -156,7 +170,7 @@ def report(graded: list[dict], threshold: float = THRESHOLD) -> dict:
     entries = [r for r in done if r["question"] == "entry"]
     buys = groups.get("entry:buy", [])
     return {
-        "horizon": "the next trading day (7 hourly bars)",
+        "horizon": f"the next trading day ({n} {size}{'' if n == 1 else 's'})",
         "threshold": threshold,
         "graded": len(done),
         "pending": len(graded) - len(done),

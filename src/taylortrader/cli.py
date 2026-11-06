@@ -144,6 +144,7 @@ def cmd_replay(args) -> int:
     from taylortrader import llm as llm_mod
     from taylortrader import replay
     from taylortrader.data import MarketData
+    from taylortrader.service import BAR
 
     cfg = load_config(args.config)
     sc = next((s for s in cfg.strategies if s.name == "ai"), None)
@@ -162,7 +163,7 @@ def cmd_replay(args) -> int:
     md = MarketData(creds, cfg.data_dir / "cache", feed="sip")
     start = datetime.now(UTC) - timedelta(days=args.days + 45)  # + warmup for the 200-bar average
     frames = {s: md.bars(s, sc.timeframe, start) for s in symbols}
-    bar = timedelta(hours=1) if sc.timeframe == "1Hour" else timedelta(days=1)
+    bar = BAR[sc.timeframe]
     qs, qualified = replay.questions(frames, strat, bar=bar, gap=args.gap, max_calls=args.max_calls,
                                      seed=args.seed)
     model = f"{cfg.ai.provider}:{cfg.ai.model}:{cfg.ai.effort}"
@@ -195,7 +196,7 @@ def cmd_replay(args) -> int:
     if errors:
         print(f"{len(errors)} calls failed (not saved; a rerun retries them). Last: {errors[-1]}")
 
-    rep = replay.grade(qs, answers, frames, float(strat.p.min_confidence))
+    rep = replay.grade(qs, answers, frames, float(strat.p.min_confidence), bar)
     out = cfg.data_dir / "replay" / f"report-{datetime.now(UTC):%Y%m%d-%H%M}.json"
     out.write_text(json.dumps(rep, default=str, indent=1))
     _print_replay(rep)
@@ -580,7 +581,8 @@ def main(argv: list[str] | None = None) -> int:
     rp.add_argument("symbols", nargs="*", help="default: the AI strategy's symbols")
     rp.add_argument("--days", type=int, default=90)
     rp.add_argument("--max-calls", type=int, default=150)
-    rp.add_argument("--entry-when", help="try a different buy rule than the config's (config unchanged)")
+    rp.add_argument("--entry-when", help="try a different buy rule than the config's (config unchanged); it's "
+                    "checked on disguised prices, so avoid absolute levels like close > 50")
     rp.add_argument("--instructions", help="try different instructions (text, or a file); config unchanged")
     rp.add_argument("--gap", type=int, default=7, help="min bars between questions on one stock")
     rp.add_argument("--workers", type=int, default=2)

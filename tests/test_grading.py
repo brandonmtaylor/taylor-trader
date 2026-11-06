@@ -4,6 +4,7 @@ import pandas as pd
 import pytest
 
 from taylortrader import chart, grading
+from taylortrader.data import regular_hours
 from taylortrader.stats import Fill
 
 T0 = datetime(2026, 11, 2, 14, 30, tzinfo=UTC)  # Monday 9:30 New York
@@ -25,9 +26,34 @@ def test_outcome_starts_from_the_last_finished_bar():
     # Asked 2h10m after the first bar opened: bars 0 and 1 had finished, so the price is bar 1's close.
     o = grading.outcome(df, T0 + timedelta(hours=2, minutes=10))
     assert o["price"] == 101
-    assert o["ret"] == pytest.approx((108 / 101 - 1) * 100)   # close 7 bars later (bar 8)
-    assert o["up"] == pytest.approx((109 / 101 - 1) * 100)
+    assert o["ret"] == pytest.approx((107 / 101 - 1) * 100)   # close 6 bars later (bar 7)
+    assert o["up"] == pytest.approx((108 / 101 - 1) * 100)
     assert grading.outcome(df, T0 + timedelta(hours=5)) is None  # the day hasn't played out yet
+
+
+def test_a_day_is_six_hourly_bars_because_the_9_00_bar_is_dropped():
+    day = pd.date_range("2026-11-02 14:00", "2026-11-02 21:00", freq="h", tz="UTC")  # 9:00-16:00 New York
+    kept = regular_hours(pd.DataFrame({"close": 1.0}, index=day))
+    assert len(kept) == grading.HORIZON_BARS == 6
+    assert grading.report([])["horizon"] == "the next trading day (6 hourly bars)"
+
+
+@pytest.mark.parametrize(("bar", "n"), [(timedelta(minutes=1), 390), (timedelta(minutes=5), 78),
+                                        (timedelta(minutes=15), 26), (timedelta(hours=1), 6), (timedelta(days=1), 1)])
+def test_a_trading_day_in_bars(bar, n):
+    assert grading.horizon_bars(bar) == n
+
+
+def test_grading_uses_the_real_bar_size():
+    bar = timedelta(minutes=15)
+    idx = pd.date_range(T0, periods=40, freq="15min", tz="UTC")
+    c = pd.Series(range(100, 140), index=idx, dtype=float)
+    df = pd.DataFrame({"open": c, "high": c + 1, "low": c - 1, "close": c, "volume": 1000.0})
+    # Asked as bar 2 ended: bars 0-2 had finished. An hourly assumption would pick an older bar.
+    g = grading.grade([decision(idx[3].to_pydatetime())], {"NVDA": df}, bar=bar)[0]
+    assert g["price"] == 102
+    assert g["ret"] == pytest.approx((128 / 102 - 1) * 100)  # a full day: 26 bars later
+    assert grading.report([g], bar=bar)["horizon"] == "the next trading day (26 bars)"
 
 
 @pytest.mark.parametrize(("question", "action", "ret", "want"), [
@@ -53,6 +79,16 @@ def test_report_compares_ai_buys_with_the_rule_alone():
     assert r["ai_buys"]["avg_ret"] > 0 > r["by_call"]["entry:hold"]["avg_ret"]
     assert r["rule_only"]["n"] == 2  # every entry question the rule let through, bought blindly
     assert [b["n"] for b in r["confidence"]] == [1, 0, 1]
+
+
+def test_open_position_shows_the_newest_buy_when_fills_come_newest_first():
+    df = hourly([100, 102, 110, 120, 115, 105, 108, 125, 130, 101])
+    fills = [Fill(T0 + timedelta(hours=6), "VRT", "buy", 1, 108.0, "b2"),
+             Fill(T0 + timedelta(hours=4), "VRT", "sell", 1, 115.0, "s1"),
+             Fill(T0 + timedelta(hours=1), "VRT", "buy", 1, 102.0, "b1")]
+    out = chart.build("VRT", "1W", df, fills, {}, [], stop=None, held_qty=1, now=T0 + timedelta(hours=10))
+    assert out["position"]["entry"] == 108.0
+    assert out["position"]["opened"] == (T0 + timedelta(hours=6)).isoformat()
 
 
 def test_chart_marks_trades_and_measures_timing():
