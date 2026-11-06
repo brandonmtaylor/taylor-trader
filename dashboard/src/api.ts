@@ -358,3 +358,71 @@ export interface TradeChartData {
   } | null;
   ai?: { i: number; t: string; action: string; question: string; confidence: number | null; acted: boolean; summary: string | null }[];
 }
+
+// --- invest plan ------------------------------------------------------------------------------------
+
+export type InvestEvery = "week" | "2weeks" | "month" | "once";
+
+export interface Holding {
+  symbol: string;
+  weight: number;
+}
+
+export interface InvestPlan {
+  enabled: boolean;
+  preview: boolean;
+  amount: number;
+  every: InvestEvery;
+  /** month: 1-28; week/2weeks: 0 = Monday .. 4 = Friday */
+  day: number;
+  start: string;
+  until: string;
+  reserve: boolean;
+  holdings: Holding[];
+}
+
+export interface InvestExample {
+  id: string;
+  name: string;
+  about: string;
+  holdings: Holding[];
+}
+
+export interface HoldingDrift {
+  target: number;
+  now: number;
+  drift: number;
+  value: number;
+}
+
+export interface InvestStatus {
+  enabled: boolean;
+  preview: boolean;
+  mode: "preview" | "paper" | "live";
+  amount: number;
+  every: InvestEvery;
+  put_in: number;
+  value: number;
+  holdings: Record<string, HoldingDrift>;
+  next: { date: string; period: string; amount: number; cash_short: boolean; split: Record<string, number> } | null;
+}
+
+export interface Contribution {
+  period: string;
+  mode: "preview" | "paper" | "live";
+  ts: string;
+  total: number;
+  planned_total: number | null;
+  buys: { symbol: string; notional: number; status: string; detail: string }[];
+}
+
+export interface InvestResp {
+  plan: InvestPlan;
+  examples: InvestExample[];
+  hard_max: number;
+  account_mode: "paper" | "live" | "dry-run";
+  history: Contribution[];
+  status: InvestStatus | null;
+  cash: number | null;
+  error: string | null;
+}

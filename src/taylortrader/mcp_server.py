@@ -31,6 +31,9 @@ refused, report the reason rather than working around it.
 - Selling places real orders on the account (paper or live). Only sell when the user explicitly asks, \
 and pass the confirmation value they would type.
 - You can't switch to live trading or touch API keys. If asked, tell the user to use the dashboard.
+- The long-term invest plan (get_invest_plan) buys a fixed mix of funds on a schedule. You can turn it \
+off or back to preview, but not start real buying or raise it: that needs the user's typed confirmation \
+in the dashboard (Invest page).
 - This is software, not financial advice. Don't present backtests or AI decisions as predictions."""
 
 READ = ToolAnnotations(read_only_hint=True, open_world_hint=False)
@@ -241,6 +244,24 @@ def build(config_path: Path = Path("config.toml")) -> MCPServer:
         isn't available here: it needs the dashboard."""
         s = bot.send("POST", "/api/mode", {"mode": mode}, f"mode set to {mode}")
         return {"mode": s["mode_label"]}
+
+    @mcp.tool(annotations=READ)
+    def get_invest_plan() -> dict:
+        """The long-term invest plan: its settings, whether it's buying or in preview, what's been put
+        in and what it's worth, each holding's share vs. its target, the next buy and how it will be
+        split, and the last few contributions."""
+        r = bot.get("/api/invest")
+        return {"plan": r["plan"], "status": r["status"], "cash": r["cash"], "recent_buys": r["history"][:6],
+                "error": r["error"]}
+
+    @mcp.tool(annotations=CHANGE)
+    def set_invest_plan_state(state: Literal["off", "preview"]) -> dict:
+        """Turn the invest plan off, or back to preview (alerts what it would buy, orders nothing). Both
+        only reduce what it does. Starting real buying needs the user's confirmation in the dashboard."""
+        plan = bot.get("/api/invest")["plan"]
+        plan = {**plan, "enabled": state == "preview" and bool(plan["holdings"]), "preview": True}
+        r = bot.send("PUT", "/api/invest", {"plan": plan}, f"invest plan set to {state}")
+        return {"enabled": r["plan"]["enabled"], "preview": r["plan"]["preview"]}
 
     @mcp.tool(annotations=SELL)
     def sell_position(symbol: str, confirm: str) -> dict:

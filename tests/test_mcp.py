@@ -72,3 +72,22 @@ def test_selling_needs_the_exact_confirmation(server):
     assert server.client.broker.closes == ["AAPL"]
     with pytest.raises(RuntimeError, match="SELL ALL"):
         call(server, "sell_everything", confirm="sell all please")
+
+
+def test_invest_plan_can_be_read_and_turned_down_but_not_up(server):
+    from dataclasses import replace
+
+    from taylortrader.config import InvestConfig, save_config
+
+    c = server.client
+    c.broker.asset_status = lambda s: (True, True)
+    cfg = replace(load_config(c.path), invest=InvestConfig(
+        enabled=True, preview=False, amount=200, holdings=[{"symbol": "VTI", "weight": 100.0}]))
+    save_config(cfg, c.path)
+    c.rt.reload()
+    plan = call(server, "get_invest_plan")
+    assert plan["plan"]["amount"] == 200 and plan["status"]["next"]["split"] == {"VTI": 200.0}
+    assert call(server, "set_invest_plan_state", state="preview") == {"enabled": True, "preview": True}
+    assert call(server, "set_invest_plan_state", state="off") == {"enabled": False, "preview": True}
+    tools = {t.name for t in asyncio.run(server.list_tools())}
+    assert "set_invest_plan_state" in tools and not any("start" in t and "invest" in t for t in tools)

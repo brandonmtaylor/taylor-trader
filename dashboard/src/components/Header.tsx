@@ -53,6 +53,7 @@ const MODES: { id: ModeId; label: string }[] = [
 const NAV = [
   { href: "#/", label: "Overview" },
   { href: "#/strategies", label: "Strategies" },
+  { href: "#/invest", label: "Invest" },
   { href: "#/settings", label: "Settings" },
 ];
 

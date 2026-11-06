@@ -352,3 +352,68 @@ def test_positions_show_stop_and_target_levels(client):
     aapl = next(p for p in a["positions"] if p["symbol"] == "AAPL")
     assert aapl["stop_price"] is None and not aapl["has_stop"]
     assert a["stops_at_risk_usd"] == pytest.approx(-240)
+
+
+# --- invest plan ---------------------------------------------------------------------------------
+
+PLAN = {"enabled": True, "preview": True, "amount": 200, "every": "month", "day": 1,
+        "holdings": [{"symbol": "VTI", "weight": 60}, {"symbol": "VXUS", "weight": 20}, {"symbol": "BND", "weight": 20}]}
+
+
+def _assets(client, bad=()):
+    client.broker.asset_status = lambda s: (True, s not in bad)
+
+
+def test_invest_plan_saves_in_preview_and_reports_the_next_buy(client):
+    _assets(client)
+    r = client.put("/api/invest", json={"plan": PLAN}, headers=WRITE)
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["plan"]["holdings"][0] == {"symbol": "VTI", "weight": 60.0}
+    assert load_config(client.path).invest.enabled
+    st = body["status"]
+    assert st["preview"] and st["next"]["amount"] == 200
+    assert st["next"]["split"] == {"VTI": 120.0, "VXUS": 40.0, "BND": 40.0}
+    assert {e["id"] for e in body["examples"]} >= {"three-80", "world"}
+    # Saving strategies from the Settings page leaves the plan alone.
+    cfg = client.get("/api/settings").json()["config"]
+    cfg["invest"] = {"enabled": False}
+    assert client.put("/api/settings", json={"config": cfg}, headers=WRITE).status_code == 200
+    assert load_config(client.path).invest.enabled
+
+
+def test_buying_for_real_needs_the_typed_amount_and_schedule(client):
+    _assets(client)
+    real = {**PLAN, "preview": False}
+    r = client.put("/api/invest", json={"plan": real}, headers=WRITE)
+    assert r.status_code == 422 and "BUY $200.00 MONTHLY" in r.json()["detail"]
+    assert not load_config(client.path).invest.enabled
+    r = client.put("/api/invest", json={"plan": real, "confirm": "BUY $200.00 MONTHLY"}, headers=WRITE)
+    assert r.status_code == 200 and not r.json()["status"]["preview"]
+    # Raising the amount asks again; lowering it doesn't.
+    assert client.put("/api/invest", json={"plan": {**real, "amount": 500}}, headers=WRITE).status_code == 422
+    assert client.put("/api/invest", json={"plan": {**real, "amount": 100}}, headers=WRITE).status_code == 200
+
+
+def test_invest_plan_refuses_unbuyable_symbols_and_strategy_symbols(client):
+    _assets(client, bad={"BND"})
+    r = client.put("/api/invest", json={"plan": PLAN}, headers=WRITE)
+    assert r.status_code == 422 and "BND can't be bought in fractional shares" in r.json()["detail"]
+    _assets(client)
+    clash = {**PLAN, "holdings": [{"symbol": "VRT", "weight": 100}]}
+    r = client.put("/api/invest", json={"plan": clash}, headers=WRITE)
+    assert r.status_code == 422 and "one owner" in r.json()["detail"]
+    assert client.put("/api/invest", json={"plan": PLAN}).status_code == 403  # writes need the dashboard header
+
+
+def test_invest_history_groups_contributions(client):
+    j = client.rt.journal
+    j.plan_invest("2026-10", "paper", {"VTI": 120.0, "BND": 80.0}, planned_total=200)
+    for r in j.invest_rows("2026-10", "paper"):
+        oid = j.record_order(mode="paper", strategy="invest", symbol=r["symbol"], side="buy", status="submitted",
+                             broker_order_id="x")
+        j.invest_mark(r["id"], "submitted", order_row=oid, attempt=True)
+    j.mark_filled(oid, 100.0, "2026-10-01T15:00:00Z")
+    hist = client.get("/api/invest").json()["history"]
+    assert hist[0]["period"] == "2026-10" and hist[0]["total"] == 200
+    assert {b["status"] for b in hist[0]["buys"]} == {"submitted", "filled"}

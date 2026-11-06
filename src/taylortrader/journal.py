@@ -170,8 +170,22 @@ class Journal:
             "('canceled', 'expired', 'rejected')", (mode,)).fetchone()
         return float(r[0])
 
-    def invest_history(self, limit: int = 200) -> list[dict]:
-        return [dict(r) for r in self.db.execute("SELECT * FROM invest_orders ORDER BY id DESC LIMIT ?", (limit,))]
+    def invest_history(self, limit: int = 500) -> list[dict]:
+        """Contributions, newest first: one per period and mode, with each symbol's buy and its order status."""
+        rows = self.db.execute(
+            "SELECT i.*, o.status AS order_status FROM invest_orders i LEFT JOIN orders o ON o.id = i.order_id "
+            "ORDER BY i.id DESC LIMIT ?", (limit,))
+        out: dict[tuple[str, str], dict] = {}
+        for r in rows:
+            e = out.setdefault((r["period"], r["mode"]), {
+                "period": r["period"], "mode": r["mode"], "ts": r["ts"], "total": 0.0,
+                "planned_total": r["planned_total"], "buys": []})
+            status = r["order_status"] or r["status"]
+            e["buys"].append({"symbol": r["symbol"], "notional": r["notional"], "status": status,
+                              "detail": r["detail"] or ""})
+            if status in ("submitted", "filled", "preview"):
+                e["total"] += r["notional"]
+        return list(out.values())
 
     # --- events / heartbeat --------------------------------------------------------------------
 

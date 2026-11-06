@@ -1,6 +1,6 @@
 # Proposal: long-term investing mode
 
-Status: proposal, not started. Written 2026-11-05.
+Status: phases 1 and 2 built (2026-11-05). Phase 3 (selling to rebalance) not started.
 
 ## The idea
 

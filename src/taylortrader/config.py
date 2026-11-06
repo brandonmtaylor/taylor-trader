@@ -222,7 +222,7 @@ def parse_config(raw: dict[str, Any]) -> Config:
     if not 10 <= int(ai.timeout_seconds) <= 600:
         raise ConfigError("[ai] timeout_seconds must be between 10 and 600")
 
-    invest = _parse_invest(raw.get("invest", {}), owners)
+    invest = parse_invest(raw.get("invest", {}), owners)
 
     return Config(
         mode=mode,
@@ -238,7 +238,7 @@ def parse_config(raw: dict[str, Any]) -> Config:
     )
 
 
-def _parse_invest(block: dict[str, Any], owners: dict[str, str]) -> InvestConfig:
+def parse_invest(block: dict[str, Any], owners: dict[str, str]) -> InvestConfig:
     from datetime import date
 
     from guardrails.invest import HARD_MAX_CONTRIBUTION

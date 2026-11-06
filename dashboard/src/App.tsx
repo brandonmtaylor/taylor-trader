@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import type { Setup, Status } from "./api";
 import { Header } from "./components/Header";
+import { InvestPage } from "./pages/InvestPage";
 import { Overview } from "./pages/Overview";
 import { SettingsPage } from "./pages/SettingsPage";
 import { SetupPage } from "./pages/SetupPage";
@@ -8,7 +9,7 @@ import { StrategiesPage } from "./pages/StrategiesPage";
 import { useSettings } from "./settings";
 import { useNow, usePoll } from "./usePoll";
 
-const ROUTES = ["/", "/strategies", "/settings", "/setup"] as const;
+const ROUTES = ["/", "/strategies", "/invest", "/settings", "/setup"] as const;
 type Route = (typeof ROUTES)[number];
 
 function useRoute(): Route {
@@ -55,7 +56,7 @@ export function App() {
   const page: Route = route === "/setup" || (needsSetup && route === "/") ? "/setup" : route;
 
   useEffect(() => {
-    document.title = { "/": "TaylorTrader", "/strategies": "Strategies · TaylorTrader",
+    document.title = { "/": "TaylorTrader", "/strategies": "Strategies · TaylorTrader", "/invest": "Invest · TaylorTrader",
       "/settings": "Settings · TaylorTrader", "/setup": "Set up · TaylorTrader" }[page];
   }, [page]);
 
@@ -65,6 +66,7 @@ export function App() {
         onStatus={onStatus} onSetup={onSetup} />
       {page === "/" && <Overview status={status.data} onStatus={() => status.reload()} />}
       {page === "/strategies" && <StrategiesPage store={store} />}
+      {page === "/invest" && <InvestPage />}
       {page === "/settings" && <SettingsPage store={store} setup={setup} onSetup={onSetup} />}
       {page === "/setup" && <SetupPage store={store} setup={setup} onSetup={onSetup} />}
       <footer className="foot">

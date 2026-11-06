@@ -335,3 +335,10 @@ holdings = [
 """
     cfg = parse_config(tomllib.loads(text))
     assert cfg.invest.weights == {"VTI": 60, "VXUS": 20, "BND": 20}
+
+
+def test_next_buy_after_the_close_is_the_next_open_day(tmp_path):
+    evening = NOW.replace(hour=23)  # Wed 6pm New York
+    s = make(tmp_path, now=evening)
+    assert s.invest.status(s.broker.snapshot())["next"]["date"] == "2026-11-05"
+    assert make(tmp_path / "b").invest.status(s.broker.snapshot())["next"]["date"] == "2026-11-04"

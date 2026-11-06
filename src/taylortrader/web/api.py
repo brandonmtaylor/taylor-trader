@@ -36,6 +36,7 @@ from taylortrader.config import (
     ConfigError,
     config_to_dict,
     parse_config,
+    parse_invest,
     save_config,
 )
 from taylortrader.secrets import (
@@ -118,6 +119,20 @@ def _downsample(series, n: int = 400) -> list[dict]:
 
 class SettingsBody(BaseModel):
     config: dict[str, Any]
+
+
+class InvestBody(BaseModel):
+    plan: dict[str, Any]
+    confirm: str | None = Field(default=None, max_length=80)
+
+
+EVERY_LABEL = {"week": "WEEKLY", "2weeks": "EVERY 2 WEEKS", "month": "MONTHLY", "once": "ONCE"}
+
+
+def invest_confirm_phrase(inv, mode: str) -> str:
+    """What the user types to let the plan spend money: the amount and schedule, so it's read, not clicked."""
+    phrase = f"BUY ${inv.amount:,.2f} {EVERY_LABEL[inv.every]}"
+    return f"LIVE {phrase}" if mode == "live" else phrase
 
 
 class SecretBody(BaseModel):
@@ -469,6 +484,7 @@ def create_app(rt: Runtime, cache_ttl: float = 10.0, project: Path = PROJECT) ->
         current = rt.settings
         raw = dict(body.config)
         raw.update(mode=current.mode, dry_run=current.dry_run, data_dir=str(current.data_dir))
+        raw["invest"] = asdict(current.invest)  # the invest plan has its own endpoint, with its own confirmation
         try:
             new = parse_config(raw)
         except ConfigError as e:
@@ -476,6 +492,74 @@ def create_app(rt: Runtime, cache_ttl: float = 10.0, project: Path = PROJECT) ->
         save(new)
         rt.journal.event("settings", "settings saved from the dashboard")
         return settings()
+
+    # --- invest plan ---------------------------------------------------------------------------------
+
+    def invest_runner():
+        from taylortrader.invest import InvestRunner
+
+        broker = need_broker()
+        return InvestRunner(rt.settings, broker, rt.journal, None, None, lambda: datetime.now(UTC),
+                            dry_run=rt.settings.dry_run)
+
+    @app.get("/api/invest")
+    def invest_status() -> dict[str, Any]:
+        from guardrails.invest import HARD_MAX_CONTRIBUTION
+        from taylortrader.invest import EXAMPLES
+
+        inv = rt.settings.invest
+        out: dict[str, Any] = {"plan": asdict(inv), "examples": EXAMPLES, "hard_max": HARD_MAX_CONTRIBUTION,
+                               "account_mode": "dry-run" if rt.settings.dry_run else rt.settings.mode,
+                               "history": invest_history(), "status": None, "cash": None, "error": None}
+        try:
+            runner = invest_runner()
+            snap = cache.get("snapshot", lambda: _broker_call(runner.broker.snapshot))
+            out["status"], out["cash"] = runner.status(snap), snap.cash
+        except HTTPException as e:
+            out["error"] = e.detail
+        return out
+
+    def invest_history() -> list[dict[str, Any]]:
+        return rt.journal.invest_history() if rt.journal else []
+
+    @app.put("/api/invest", dependencies=[Depends(guard)])
+    def put_invest(body: InvestBody) -> dict[str, Any]:
+        """Save the invest plan. Turning on real buying needs `confirm`: the exact amount and schedule
+        on paper, plus the typed phrase on a live account."""
+        current = rt.settings
+        owners_now = {s: f"strategy {i + 1} ({sc.name})" for i, sc in enumerate(current.strategies)
+                      if sc.enabled for s in sc.symbols}
+        try:
+            new = parse_invest(dict(body.plan), owners_now)
+        except ConfigError as e:
+            raise HTTPException(422, str(e)) from None
+        real = new.enabled and not new.preview
+        was_real = current.invest.enabled and not current.invest.preview
+        bigger = new.amount > current.invest.amount or new.holdings != current.invest.holdings \
+            or new.every != current.invest.every
+        if real and (not was_real or bigger):
+            want = invest_confirm_phrase(new, current.mode)
+            if (body.confirm or "").strip() != want:
+                raise HTTPException(422, f'To buy for real, confirm with "{want}".')
+        if new.symbols and rt.broker is not None:
+            bad = []
+            for sym in new.symbols:
+                try:
+                    tradable, fractionable = rt.broker.asset_status(sym)
+                except Exception:  # noqa: BLE001 - unknown symbol, or Alpaca unreachable
+                    bad.append(f"{sym} wasn't found at Alpaca")
+                    continue
+                if not tradable:
+                    bad.append(f"{sym} isn't tradable at Alpaca")
+                elif not fractionable:
+                    bad.append(f"{sym} can't be bought in fractional shares")
+            if bad:
+                raise HTTPException(422, "; ".join(bad) + ".")
+        save(replace(current, invest=new))
+        what = ("off" if not new.enabled else "preview" if new.preview else f"buying ${new.amount:,.2f} {new.every}")
+        rt.journal.event("invest", f"invest plan saved from the dashboard: {what}",
+                         "warning" if real and current.mode == "live" else "info")
+        return invest_status()
 
     @app.post("/api/secrets", dependencies=[Depends(guard)])
     def put_secret(body: SecretBody) -> dict[str, Any]:

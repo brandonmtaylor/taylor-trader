@@ -35,6 +35,27 @@ MAX_ATTEMPTS = 3
 STRATEGY = "invest"        # the name plan orders carry in the journal
 
 
+# Starting points the user picks from and edits. Examples of common simple mixes, not advice:
+# nothing here asks about the user or picks one for them.
+EXAMPLES = [
+    {"id": "three-80", "name": "Three funds, mostly stocks",
+     "about": "80% stocks (US and international), 20% bonds. Grows more, swings more.",
+     "holdings": [{"symbol": "VTI", "weight": 55.0}, {"symbol": "VXUS", "weight": 25.0},
+                  {"symbol": "BND", "weight": 20.0}]},
+    {"id": "three-60", "name": "Three funds, balanced",
+     "about": "60% stocks, 40% bonds. The classic middle ground.",
+     "holdings": [{"symbol": "VTI", "weight": 40.0}, {"symbol": "VXUS", "weight": 20.0},
+                  {"symbol": "BND", "weight": 40.0}]},
+    {"id": "world", "name": "One fund, the whole world",
+     "about": "Every major stock market in one fund. Simplest, all stocks.",
+     "holdings": [{"symbol": "VT", "weight": 100.0}]},
+    {"id": "conservative", "name": "Conservative",
+     "about": "30% stocks, 50% bonds, 20% short-term Treasury bills. Steadier, grows less.",
+     "holdings": [{"symbol": "VTI", "weight": 20.0}, {"symbol": "VXUS", "weight": 10.0},
+                  {"symbol": "BND", "weight": 50.0}, {"symbol": "SGOV", "weight": 20.0}]},
+]
+
+
 # --- schedule ------------------------------------------------------------------------------------
 
 def due_period(inv: InvestConfig, today: date) -> str | None:
@@ -259,13 +280,21 @@ class InvestRunner:
         inv = self.inv
         values = plan_values(inv, snap)
         mode = self.mode
-        today = self.now().astimezone(NY).date()
-        nxt = next_due(inv, today, self.journal.invest_periods(mode)) if inv.enabled else None
+        now_ny = self.now().astimezone(NY)
+        # After the close, today's chance has passed: the earliest buy is the next day.
+        first = now_ny.date() + timedelta(days=1 if (now_ny.hour, now_ny.minute) >= (16, 0) else 0)
+        nxt = next_due(inv, first, self.journal.invest_periods(mode)) if inv.enabled else None
+        upcoming = None
+        if nxt:
+            amount = inv.amount if mode == "preview" else min(inv.amount, snap.cash)
+            upcoming = {"date": nxt[0].isoformat(), "period": nxt[1], "amount": inv.amount,
+                        "cash_short": mode != "preview" and snap.cash + 0.005 < inv.amount,
+                        "split": split(math.floor(amount * 100) / 100, values, inv.weights)}
+        put_in = self.journal.invest_put_in(mode) if mode != "preview" else 0.0
         return {
-            "enabled": inv.enabled, "preview": mode == "preview", "amount": inv.amount, "every": inv.every,
-            "put_in": self.journal.invest_put_in(mode), "value": sum(values.values()),
-            "holdings": drift(values, inv.weights),
-            "next": {"date": nxt[0].isoformat(), "period": nxt[1]} if nxt else None,
+            "enabled": inv.enabled, "preview": mode == "preview", "mode": mode, "amount": inv.amount,
+            "every": inv.every, "put_in": put_in, "value": sum(values.values()),
+            "holdings": drift(values, inv.weights), "next": upcoming,
         }
 
     def summary_line(self, snap) -> str | None:

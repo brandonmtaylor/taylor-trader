@@ -127,8 +127,12 @@ on a schedule (say $200 a month into US stocks, international stocks and bonds) 
 - Trading strategies size from what's left after the plan, so a strategy's "50%" never spends
   plan money.
 
-Set it up under `[invest]` in `config.toml` (see `config.example.toml`). Not financial advice; the
-example holdings are an example. The design and what's next (dashboard page, rebalancing by
+Set it up on the dashboard's **Invest** page: start from a ready-made mix, edit the targets, pick the
+amount and schedule, and see each holding's share against its target and the next buy's split.
+Turning on real buying asks you to type the amount and schedule. (Or edit `[invest]` in
+`config.toml`; see `config.example.toml`.) From Claude, `get_invest_plan` reports on it and
+`set_invest_plan_state` can turn it off or back to preview, never on. Not financial advice; the
+ready-made mixes are examples. The design and what's next (dashboard page, rebalancing by
 selling) are in [docs/proposals/investing.md](docs/proposals/investing.md).
 
 ## Talk to it from Claude (MCP)
