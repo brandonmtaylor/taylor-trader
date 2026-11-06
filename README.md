@@ -35,6 +35,13 @@ The dashboard listens on 127.0.0.1 only. Every change it makes needs a custom he
 same-origin request, so another website open in your browser can't change your settings.
 Keys go in and are never shown again: the page only says where each one is stored.
 
+**From your phone, on the same Wi-Fi:** `uv run taylortrader wifi on` prints a passcode and the
+address to open (`http://<your-mac>.local:8787`). Other devices sign in once and stay signed in for 30
+days; this Mac never needs the passcode. Wrong guesses are rate-limited, and going live or changing API
+keys only works on the Mac itself. It's plain http, so use it on a home network you trust (for
+anywhere else, put the Mac and phone on [Tailscale](https://tailscale.com)). `wifi on --new` makes a
+new passcode and signs every device out; `wifi off` closes it again.
+
 ## Command line
 Everything the dashboard does also works from a terminal:
 ```bash
@@ -49,6 +56,8 @@ uv run taylortrader run --dry-run --once   # one check: decides and alerts, plac
 uv run taylortrader install-service        # launchd agents (the dashboard can start/stop them)
 uv run taylortrader kill on                # pause new buys; sells and stops keep working
 uv run taylortrader journal                # recent orders, heartbeat, imported history
+uv run taylortrader dashboard --background # keep the dashboard running (and --restart, --stop)
+uv run taylortrader wifi on                # open it to your phone on the same Wi-Fi, with a passcode
 ```
 Settings live in `config.toml` (no secrets; `config.example.toml` explains each one). The dashboard
 writes it after validating, keeping the previous version as `config.toml.bak`; editing by hand

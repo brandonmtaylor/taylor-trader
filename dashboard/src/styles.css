@@ -773,3 +773,11 @@ select.input { width: 100%; }
 .whatif tr.is-on .whatif__pick { border-bottom-color: var(--series-1); }
 .whatif__since { display: block; font-size: 12px; color: var(--ink-3); }
 .whatif__chart { margin-top: 14px; }
+
+/* Sign-in (another device, Wi-Fi access on) */
+.signin { min-height: 70vh; display: grid; place-items: center; padding: 24px 16px; }
+.signin__card { width: min(380px, 100%); display: flex; flex-direction: column; gap: 14px; }
+.signin__card h1 { margin: 0; font-size: 22px; }
+.signin__card .panel__sub { margin: 0; }
+.signin__card .btn { align-self: stretch; }
+.signin__error { margin: 0; color: var(--crit); font-size: 13.5px; }

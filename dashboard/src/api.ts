@@ -242,8 +242,17 @@ export interface BacktestResult {
 
 export class ApiError extends Error {}
 
+/** With Wi-Fi access on, another device that isn't signed in gets 401: show the sign-in screen. */
+export const SIGN_IN_EVENT = "tt-sign-in";
+function signedOut(res: Response) {
+  if (res.status === 401) window.dispatchEvent(new Event(SIGN_IN_EVENT));
+}
+
+export interface Session { wifi: boolean; here: boolean; signed_in: boolean }
+
 export async function get<T>(path: string): Promise<T> {
   const res = await fetch(path, { headers: { Accept: "application/json" } });
+  signedOut(res);
   if (!res.ok) {
     let detail = `${res.status} ${res.statusText}`;
     try {
@@ -264,6 +273,7 @@ export async function send<T>(method: "POST" | "PUT" | "DELETE", path: string, b
     headers: { Accept: "application/json", "Content-Type": "application/json", "X-TaylorTrader": "1" },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
+  if (path !== "/api/login") signedOut(res);
   if (!res.ok) {
     let detail = `${res.status} ${res.statusText}`;
     try {

@@ -1,11 +1,12 @@
-"""Dashboard API. Listens on 127.0.0.1 only.
+"""Dashboard API. Listens on 127.0.0.1 only, unless Wi-Fi access is on (see web/remote.py).
 
 Reads are GETs. Every change (settings, keys, mode, pause, service) is a POST/PUT/DELETE that
 must carry the `X-TaylorTrader: 1` header and an Origin of this same address:
 - a custom header forces a CORS preflight, which this server never approves, so another
   website open in your browser can't send one;
 - the Origin check refuses anything that did get through from elsewhere;
-- TrustedHostMiddleware refuses other Host names (DNS rebinding).
+- other Host names are refused (DNS rebinding);
+- with Wi-Fi access on, devices other than this Mac must sign in with the passcode first.
 Secret values go in and never come back out: the API reports only whether, and where, each is set.
 """
 
@@ -21,8 +22,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
-from fastapi.middleware.trustedhost import TrustedHostMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, SecretStr
 
@@ -52,6 +52,7 @@ from taylortrader.secrets import (
 )
 from taylortrader.service import describe_mode, kill_file
 from taylortrader.strategies import list_strategies
+from taylortrader.web.remote import COOKIE, SESSION_DAYS, Sessions, host_allowed, is_loopback, mac_name
 from taylortrader.web.runtime import Runtime
 
 log = logging.getLogger(__name__)
@@ -152,6 +153,10 @@ class ModeBody(BaseModel):
     confirm: str = ""
 
 
+class LoginBody(BaseModel):
+    passcode: SecretStr = Field(max_length=64)
+
+
 class PauseBody(BaseModel):
     paused: bool
 
@@ -179,10 +184,40 @@ class BacktestBody(BaseModel):
     take_profit_pct: float = Field(0, ge=0)
 
 
-def create_app(rt: Runtime, cache_ttl: float = 10.0, project: Path = PROJECT) -> FastAPI:
+SIGN_IN = "Sign in with the dashboard passcode."
+OPEN_PATHS = {"/api/session", "/api/login"}
+MAC_ONLY = "Going live and API keys can only be changed on the Mac running TaylorTrader."
+
+
+def create_app(rt: Runtime, cache_ttl: float = 10.0, project: Path = PROJECT,
+               passcode: str | None = None) -> FastAPI:
+    """`passcode` set means Wi-Fi access is on: other devices may connect, after signing in."""
     app = FastAPI(title="TaylorTrader", docs_url=None, redoc_url=None, openapi_url=None)
-    # Reject requests whose Host isn't this machine (blocks DNS-rebinding from web pages).
-    app.add_middleware(TrustedHostMiddleware, allowed_hosts=["127.0.0.1", "localhost"])
+    sessions = Sessions(passcode) if passcode else None
+    name = mac_name() if passcode else None
+
+    def here(request: Request) -> bool:
+        """This Mac itself. Always true with Wi-Fi access off (the server only listens locally)."""
+        return sessions is None or is_loopback(request.client.host if request.client else None)
+
+    def signed_in(request: Request) -> bool:
+        return here(request) or (sessions is not None and sessions.valid(request.cookies.get(COOKIE)))
+
+    @app.middleware("http")
+    async def gate(request: Request, call_next):
+        # Reject Host names that aren't this machine (blocks DNS rebinding from web pages).
+        if not host_allowed(request.headers.get("host", ""), sessions is not None, name):
+            return PlainTextResponse("Invalid host header", status_code=400)
+        path = request.url.path
+        if path.startswith("/api/") and path not in OPEN_PATHS and not signed_in(request):
+            return JSONResponse({"detail": SIGN_IN}, status_code=401)
+        return await call_next(request)
+
+    def mac_only(request: Request) -> None:
+        """Same line the phone app will hold: real money and keys are changed on the Mac."""
+        if not here(request):
+            raise HTTPException(403, MAC_ONLY)
+
     cache = TTLCache(cache_ttl)
     slow_cache = TTLCache(max(cache_ttl, 300.0))  # price history and grades: minutes old is fine
     dev_origins = {"http://localhost:5173", "http://127.0.0.1:5173"} if os.environ.get("TAYLORTRADER_DEV") else set()
@@ -251,6 +286,32 @@ def create_app(rt: Runtime, cache_ttl: float = 10.0, project: Path = PROJECT) ->
             "secrets": {n: secret_source(n, rt.dotenv_path) for n in SETTABLE},
             "service": launchd.status(),
         }
+
+    @app.get("/api/session")
+    def session(request: Request) -> dict[str, Any]:
+        return {"wifi": sessions is not None, "here": here(request), "signed_in": signed_in(request)}
+
+    @app.post("/api/login", dependencies=[Depends(guard)])
+    def login(body: LoginBody, request: Request, response: Response) -> dict[str, Any]:
+        if sessions is None or here(request):
+            return session(request)
+        device = request.client.host if request.client else "?"
+        wait = sessions.wait_s(device)
+        if wait:
+            raise HTTPException(429, f"Too many wrong passcodes. Try again in {max(1, round(wait / 60))} min.")
+        if not sessions.check(device, body.passcode.get_secret_value()):
+            log.warning("wrong dashboard passcode from %s", device)
+            raise HTTPException(401, "That passcode isn't right. It's shown by `taylortrader wifi on` on the Mac.")
+        log.info("dashboard signed in from %s", device)
+        rt.journal.event("settings", f"dashboard signed in from {device}")
+        response.set_cookie(COOKIE, sessions.issue(), max_age=SESSION_DAYS * 86400, httponly=True,
+                            samesite="strict", path="/")
+        return {"wifi": True, "here": False, "signed_in": True}
+
+    @app.post("/api/logout", dependencies=[Depends(guard)])
+    def logout(request: Request, response: Response) -> dict[str, Any]:
+        response.delete_cookie(COOKIE, path="/")
+        return {"wifi": sessions is not None, "here": here(request), "signed_in": here(request)}
 
     @app.get("/api/status")
     def status() -> dict[str, Any]:
@@ -596,7 +657,7 @@ def create_app(rt: Runtime, cache_ttl: float = 10.0, project: Path = PROJECT) ->
                          "warning" if real and current.mode == "live" else "info")
         return invest_status()
 
-    @app.post("/api/secrets", dependencies=[Depends(guard)])
+    @app.post("/api/secrets", dependencies=[Depends(guard), Depends(mac_only)])
     def put_secret(body: SecretBody) -> dict[str, Any]:
         if body.name not in SETTABLE:
             raise HTTPException(422, f"{body.name} can't be set here.")
@@ -608,7 +669,7 @@ def create_app(rt: Runtime, cache_ttl: float = 10.0, project: Path = PROJECT) ->
         changed()
         return setup()
 
-    @app.delete("/api/secrets/{name}", dependencies=[Depends(guard)])
+    @app.delete("/api/secrets/{name}", dependencies=[Depends(guard), Depends(mac_only)])
     def remove_secret(name: str) -> dict[str, Any]:
         if name not in SETTABLE:
             raise HTTPException(422, f"{name} can't be removed here.")
@@ -617,14 +678,16 @@ def create_app(rt: Runtime, cache_ttl: float = 10.0, project: Path = PROJECT) ->
         changed()
         return setup()
 
-    @app.post("/api/alpaca/test", dependencies=[Depends(guard)])
+    @app.post("/api/alpaca/test", dependencies=[Depends(guard), Depends(mac_only)])
     def alpaca_test(body: AlpacaTestBody) -> dict[str, Any]:
         """Connect with the given keys (or the stored ones) and say which account they open."""
         return test_keys(body.mode, body.key_id, body.secret_key)
 
     @app.post("/api/mode", dependencies=[Depends(guard)])
-    def set_mode(body: ModeBody) -> dict[str, Any]:
+    def set_mode(body: ModeBody, request: Request) -> dict[str, Any]:
         """Dry run / paper / live. Live needs the typed phrase and live keys that open an active account."""
+        if body.mode == "live":
+            mac_only(request)
         if not rt.configured:
             raise HTTPException(409, "Finish setup first.")
         cfg = rt.settings

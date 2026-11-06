@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react";
-import type { Setup, Status } from "./api";
+import { get, SIGN_IN_EVENT, type Session, type Setup, type Status } from "./api";
 import { Header } from "./components/Header";
 import { InvestPage } from "./pages/InvestPage";
 import { Overview } from "./pages/Overview";
 import { SettingsPage } from "./pages/SettingsPage";
+import { SignInPage } from "./pages/SignInPage";
 import { SetupPage } from "./pages/SetupPage";
 import { StrategiesPage } from "./pages/StrategiesPage";
 import { useSettings } from "./settings";
@@ -29,7 +30,27 @@ function useRoute(): Route {
   return route;
 }
 
+/** null while checking; with Wi-Fi access on, other devices sign in before anything else loads. */
+function useSession(): [Session | null, (s: Session) => void] {
+  const [session, setSession] = useState<Session | null>(null);
+  useEffect(() => {
+    const check = () => get<Session>("/api/session").then(setSession).catch(() =>
+      setSession({ wifi: false, here: true, signed_in: true }));
+    check();
+    window.addEventListener(SIGN_IN_EVENT, check);
+    return () => window.removeEventListener(SIGN_IN_EVENT, check);
+  }, []);
+  return [session, setSession];
+}
+
 export function App() {
+  const [session, setSession] = useSession();
+  if (session == null) return null;
+  if (!session.signed_in) return <SignInPage onSignedIn={setSession} />;
+  return <Dashboard />;
+}
+
+function Dashboard() {
   const route = useRoute();
   const now = useNow(1000);
   const status = usePoll<Status>("/api/status", 5_000);

@@ -11,6 +11,7 @@
   journal [--import-legacy DB]   recent orders; optionally import the original bot's trades
   install-service [--dry-run]    write launchd agents (the dashboard can also start/stop the service)
   dashboard [--port 8787]        setup, settings and status at http://127.0.0.1:8787 (this machine only)
+  wifi on|off|status             let your phone open the dashboard on the same Wi-Fi, with a passcode
   mcp                            MCP server over stdio, for Claude Code or the Claude desktop app
 """
 
@@ -450,16 +451,64 @@ def cmd_dashboard(args) -> int:
               "Restart it with `taylortrader dashboard --restart`; stop with `taylortrader dashboard --stop`.")
         return 0
 
+    from taylortrader.secrets import DASHBOARD_PASSCODE_VAR, get_secret
+
     setup_logging(level=logging.INFO)
     rt = Runtime(config_path=args.config)
     url = f"http://127.0.0.1:{args.port}"
+    code = get_secret(DASHBOARD_PASSCODE_VAR, rt.dotenv_path)
+    passcode = code.get_secret_value() if code else None
     print(f"TaylorTrader dashboard: {url}  (Ctrl-C to stop)")
+    if passcode:
+        print("Wi-Fi access is on: other devices on your network can open it with the passcode "
+              "(`taylortrader wifi off` to stop).")
     if not rt.configured:
         print("No settings yet: the dashboard will walk you through setup.")
     if not args.no_open:
         threading.Timer(1.0, lambda: webbrowser.open(url)).start()
     # Don't wait on open browser polls when stopping: a restart after an update should take a second.
-    uvicorn.run(create_app(rt), host="127.0.0.1", port=args.port, log_level="warning", timeout_graceful_shutdown=2)
+    uvicorn.run(create_app(rt, passcode=passcode), host="0.0.0.0" if passcode else "127.0.0.1",
+                port=args.port, log_level="warning", timeout_graceful_shutdown=2)
+    return 0
+
+
+def cmd_wifi(args) -> int:
+    """Wi-Fi access for the dashboard: on (with a passcode), off, or status."""
+    from taylortrader import launchd
+    from taylortrader.secrets import DASHBOARD_PASSCODE_VAR, delete_secret, get_secret, set_secret
+    from taylortrader.web import remote
+
+    current = get_secret(DASHBOARD_PASSCODE_VAR, redact=False)
+    background = launchd.status(launchd.DASHBOARD)["loaded"]
+    if args.action == "status":
+        print(f"Wi-Fi access is {'on' if current else 'off'}.")
+        return 0
+    if args.action == "off":
+        delete_secret(DASHBOARD_PASSCODE_VAR)
+        if background:
+            launchd.restart_dashboard()
+        print("Wi-Fi access is off: the dashboard only opens on this Mac again, and every device is signed out."
+              + ("" if background else " Restart the dashboard if it's running."))
+        return 0
+    if current and not args.new:
+        code = current.get_secret_value()
+    else:
+        code = remote.new_passcode()
+        set_secret(DASHBOARD_PASSCODE_VAR, code)
+    if background:
+        launchd.restart_dashboard()
+    name, ip = remote.mac_name(), remote.lan_address()
+    print("Wi-Fi access is on. On your phone, on the same Wi-Fi, open:")
+    if name:
+        print(f"  http://{name}.local:{args.port}")
+    if ip:
+        print(f"  http://{ip}:{args.port}   (if the name doesn't work; this address can change)")
+    print(f"\nPasscode: {code}\n")
+    print("Each device signs in once and stays signed in for 30 days. Going live and API keys can only be\n"
+          "changed on this Mac. `taylortrader wifi on --new` makes a new passcode and signs every device out;\n"
+          "`taylortrader wifi off` closes it again. If macOS asks whether to accept incoming connections, allow it.")
+    if not background:
+        print("Restart the dashboard (or `taylortrader dashboard --background`) for this to take effect.")
     return 0
 
 
@@ -539,6 +588,11 @@ def main(argv: list[str] | None = None) -> int:
     dash.add_argument("--restart", action="store_true", help="restart the background dashboard (after an update)")
     dash.add_argument("--stop", dest="foreground_again", action="store_true", help="stop the background dashboard")
     dash.set_defaults(fn=cmd_dashboard)
+    wifi = sub.add_parser("wifi", help="let other devices on your Wi-Fi open the dashboard, with a passcode")
+    wifi.add_argument("action", choices=["on", "off", "status"])
+    wifi.add_argument("--new", action="store_true", help="make a new passcode (signs every device out)")
+    wifi.add_argument("--port", type=int, default=8787)
+    wifi.set_defaults(fn=cmd_wifi)
     sub.add_parser("mcp", help="MCP server over stdio (started by Claude, not by you)").set_defaults(fn=cmd_mcp)
 
     argv = sys.argv[1:] if argv is None else argv

@@ -19,6 +19,9 @@ from pydantic import SecretStr
 
 KEYCHAIN_SERVICE = "taylortrader"
 LIVE_CONFIRM_VAR = "TAYLORTRADER_ALLOW_LIVE"
+# Set only from the command line on the Mac (`taylortrader wifi on`), never through the dashboard.
+DASHBOARD_PASSCODE_VAR = "TAYLORTRADER_DASHBOARD_PASSCODE"
+_STORABLE_ELSEWHERE = (LIVE_CONFIRM_VAR, DASHBOARD_PASSCODE_VAR)
 
 # Every secret value loaded in this process. The logging filter masks these.
 _LOADED_SECRETS: set[str] = set()
@@ -130,7 +133,7 @@ def keychain_available() -> bool:
 
 
 def _check_value(name: str, value: str) -> str:
-    if name not in (*SETTABLE, LIVE_CONFIRM_VAR):
+    if name not in (*SETTABLE, *_STORABLE_ELSEWHERE):
         raise SecretsError(f"{name} isn't a setting TaylorTrader stores")
     value = value.strip()
     if not value or len(value) > 512 or any(ch in value for ch in "\r\n\0"):
@@ -169,7 +172,7 @@ def set_secret(name: str, value: str, dotenv_path: Path | None = None) -> str:
 
 
 def delete_secret(name: str, dotenv_path: Path | None = None) -> None:
-    if name not in (*SETTABLE, LIVE_CONFIRM_VAR):
+    if name not in (*SETTABLE, *_STORABLE_ELSEWHERE):
         raise SecretsError(f"{name} isn't a setting TaylorTrader stores")
     if keychain_available():
         subprocess.run(["security", "delete-generic-password", "-s", KEYCHAIN_SERVICE, "-a", name],

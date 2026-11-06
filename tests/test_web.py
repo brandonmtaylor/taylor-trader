@@ -428,3 +428,87 @@ def test_invest_whatif_runs_your_mix_and_the_examples(client):
     assert body["amount"] == 200 and body["every"] == "month"
     res = body["mixes"][0]["result"]
     assert res["put_in"] > 0 and res["series"]["value"]
+
+
+# --- Wi-Fi access (passcode) -----------------------------------------------------------------------
+
+PHONE = ("192.168.1.20", 50000)
+CODE = "abcd-efgh-jkmn"
+
+
+def lan_clients(tmp_path, monkeypatch):
+    """The same app, with Wi-Fi access on: one client on this Mac, one phone on the network."""
+    from taylortrader.web import remote
+
+    monkeypatch.setattr(api_mod, "mac_name", lambda: "Test-Mac")
+    (tmp_path / ".env").write_text("ALPACA_PAPER_KEY_ID=goodpaper\nALPACA_PAPER_SECRET_KEY=s3cretpaper\n")
+    base = make_client(tmp_path, Config(data_dir=tmp_path / "var",
+                                        strategies=[StrategyConfig(name="macd_rsi", symbols=["VRT"])]))
+    app = create_app(base.rt, cache_ttl=0, passcode=CODE)
+    mac = TestClient(app, base_url="http://127.0.0.1", client=("127.0.0.1", 50000))
+    phone = TestClient(app, base_url="http://192.168.1.10:8787", client=PHONE)
+    phone_write = {"X-TaylorTrader": "1", "Origin": "http://192.168.1.10:8787"}
+    return mac, phone, phone_write, remote
+
+
+def test_wifi_off_is_unchanged_no_login_and_no_network_names(client):
+    assert client.get("/api/session").json() == {"wifi": False, "here": True, "signed_in": True}
+    assert TestClient(client.app, base_url="http://192.168.1.10").get("/api/status").status_code == 400
+
+
+def test_wifi_phone_must_sign_in_and_the_mac_never_does(tmp_path, monkeypatch):
+    mac, phone, w, _ = lan_clients(tmp_path, monkeypatch)
+    assert mac.get("/api/status").status_code == 200
+    assert phone.get("/api/status").status_code == 401
+    assert phone.get("/api/session").json() == {"wifi": True, "here": False, "signed_in": False}
+    assert phone.get("/").status_code in (200, 404)                     # the page itself holds no data
+    assert phone.post("/api/login", json={"passcode": CODE}).status_code == 403  # login needs the write header too
+    r = phone.post("/api/login", json={"passcode": "ABCD EFGH JKMN"}, headers=w)  # forgiving about case and spaces
+    assert r.status_code == 200 and "httponly" in r.headers["set-cookie"].lower()
+    assert "samesite=strict" in r.headers["set-cookie"].lower()
+    assert phone.get("/api/status").status_code == 200
+    assert phone.post("/api/pause", json={"paused": True}, headers=w).status_code == 200
+    phone.post("/api/logout", headers=w)
+    assert phone.get("/api/status").status_code == 401
+
+
+def test_wifi_host_names(tmp_path, monkeypatch):
+    mac, *_ = lan_clients(tmp_path, monkeypatch)
+    for host, ok in [("192.168.1.10:8787", True), ("test-mac.local:8787", True), ("[fe80::1]:8787", True),
+                     ("evil.example.com", False), ("other-mac.local", False)]:
+        assert (mac.get("/api/status", headers={"host": host}).status_code != 400) is ok, host
+
+
+def test_wifi_wrong_guesses_are_limited(tmp_path, monkeypatch):
+    _, phone, w, remote = lan_clients(tmp_path, monkeypatch)
+    for _ in range(remote.PER_DEVICE_TRIES):
+        assert phone.post("/api/login", json={"passcode": "nope-nope-nope"}, headers=w).status_code == 401
+    r = phone.post("/api/login", json={"passcode": CODE}, headers=w)      # even the right one waits now
+    assert r.status_code == 429 and "Try again" in r.json()["detail"]
+    other = TestClient(phone.app, base_url="http://192.168.1.10:8787", client=("192.168.1.30", 1))
+    assert other.post("/api/login", json={"passcode": CODE}, headers=w).status_code == 200
+
+
+def test_wifi_going_live_and_keys_stay_on_the_mac(tmp_path, monkeypatch):
+    mac, phone, w, _ = lan_clients(tmp_path, monkeypatch)
+    phone.post("/api/login", json={"passcode": CODE}, headers=w)
+    assert phone.post("/api/mode", json={"mode": "live", "confirm": "GO LIVE"}, headers=w).status_code == 403
+    assert phone.post("/api/secrets", json={"name": "NTFY_TOPIC", "value": "x" * 10}, headers=w).status_code == 403
+    assert phone.delete("/api/secrets/ALPACA_PAPER_KEY_ID", headers=w).status_code == 403
+    assert phone.post("/api/alpaca/test", json={"mode": "paper"}, headers=w).status_code == 403
+    assert phone.post("/api/mode", json={"mode": "dry-run"}, headers=w).status_code == 200  # the safe direction is fine
+    assert mac.post("/api/secrets", json={"name": "NTFY_TOPIC", "value": "x" * 10}, headers=WRITE).status_code == 200
+
+
+def test_sessions_expire_and_a_new_passcode_signs_everyone_out():
+    from taylortrader.web.remote import SESSION_DAYS, Sessions, new_passcode
+
+    t = [1_000_000.0]
+    s = Sessions(CODE, clock=lambda: t[0])
+    cookie = s.issue()
+    assert s.valid(cookie) and not s.valid(cookie + "0") and not s.valid("123.abc")
+    assert not Sessions("other-code-here", clock=lambda: t[0]).valid(cookie)
+    t[0] += SESSION_DAYS * 86400 + 1
+    assert not s.valid(cookie)
+    a, b = new_passcode(), new_passcode()
+    assert a != b and len(a) == 14 and not set(a.replace("-", "")) & set("01ilo")
