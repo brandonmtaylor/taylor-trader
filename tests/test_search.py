@@ -71,7 +71,7 @@ def test_full_search_reports_everything_and_logs_each_holdout_look(tmp_path):
 
 
 @pytest.mark.parametrize(("excess", "beat", "word"), [
-    (3.0, 95.0, "PASSED"), (3.0, 60.0, "NOT PROVEN"), (-2.0, 99.0, "FAILED"),
+    (3.0, 95.0, "PASSED"), (3.0, 60.0, "NOT PROVEN"), (-2.0, 99.0, "FAILED, with a caveat"), (-2.0, 40.0, "FAILED:"),
 ])
 def test_verdicts(excess, beat, word):
     assert search.verdict({"excess": excess, "trades": 5}, beat).startswith(word)
@@ -89,3 +89,9 @@ def test_symbols_listed_later_share_the_same_holdout_dates(tmp_path):
     rep = search.run_search({"OLD": early, "NEW": late}, grid, holdout=0.3, seeds=3)
     s_new = search.split_at(late, 0.3)
     assert rep["periods"]["holdout"][0] == str(late.index[s_new].date())
+
+
+def test_universes_are_fixed_lists():
+    assert len(search.UNIVERSES["dow2020"]) == len(set(search.UNIVERSES["dow2020"])) == 30
+    assert "BA" in search.UNIVERSES["dow2020"] and "NVDA" not in search.UNIVERSES["dow2020"]  # NVDA joined in 2024
+    assert len(search.UNIVERSES["sectors"]) == 9

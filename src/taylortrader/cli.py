@@ -234,17 +234,32 @@ def cmd_search(args) -> int:
     from taylortrader.data import MarketData
 
     cfg = load_config(args.config)
-    symbols = [s.upper() for s in args.symbols] or sorted({s for sc in cfg.strategies for s in sc.symbols})
+    if args.universe:
+        symbols = list(search.UNIVERSES[args.universe])
+    else:
+        symbols = [s.upper() for s in args.symbols] or sorted({s for sc in cfg.strategies for s in sc.symbols})
     creds = load_alpaca_credentials("paper")  # data only
     md = MarketData(creds, cfg.data_dir / "cache", feed=args.feed or ("sip" if cfg.feed == "yahoo" else cfg.feed))
     start = datetime.now(UTC) - timedelta(days=args.days)
     frames = {}
     for sym in symbols:
-        df = md.bars(sym, args.timeframe, start)
+        try:
+            df = md.bars(sym, args.timeframe, start)
+        except Exception as e:  # noqa: BLE001 - one bad symbol shouldn't stop the search
+            print(f"  skipping {sym}: {e}")
+            continue
         if len(df) < 400:
             print(f"  skipping {sym}: only {len(df)} bars")
             continue
         frames[sym] = df
+    # A stock that stopped trading (bought out, delisted) would end early and get its own holdout dates.
+    # It's dropped and named, since dropping a stock that ended badly flatters buy-and-hold.
+    last = max(df.index[-1] for df in frames.values())
+    ended = [s for s, df in frames.items() if (last - df.index[-1]).days > 10]
+    for s in ended:
+        print(f"  dropping {s}: its data ends {frames[s].index[-1].date()} (stopped trading?). Keep this in mind: "
+              "dropping stocks that ended makes holding look better than it was.")
+        del frames[s]
     if not frames:
         print("error: no symbol had enough history", file=sys.stderr)
         return 2
@@ -259,7 +274,8 @@ def cmd_search(args) -> int:
     rep = search.run_search(frames, grid, holdout=args.holdout / 100, seeds=args.seeds,
                             log_path=cfg.data_dir / "search" / "holdout-looks.jsonl", on_progress=progress)
     print()
-    out = cfg.data_dir / "search" / f"search-{datetime.now(UTC):%Y%m%d-%H%M}.json"
+    tag = args.universe or "-".join(frames)[:40]
+    out = cfg.data_dir / "search" / f"search-{tag}-{args.timeframe}-{datetime.now(UTC):%Y%m%d-%H%M%S}.json"
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(rep, default=str, indent=1))
     _print_search(rep, args.top)
@@ -285,7 +301,9 @@ def _print_search(rep: dict, top: int) -> None:
     if w and h:
         print(f"\nHoldout {hp[0]} to {hp[1]}: {w['label']}")
         print(f"  return {h['return']:+.1f}% vs. buy-and-hold {h['buy_hold']:+.1f}%  ->  {h['excess']:+.1f} pts, "
-              f"{h['trades']} trades, worst drop {h['max_dd']:.1f}%")
+              f"{h['trades']} trades")
+        print(f"  In the market {h['exposure']:.0f}% of the time. Worst drop {h['max_dd']:.1f}% vs. holding "
+              f"{h['buy_hold_max_dd']:.1f}% (average per symbol).")
         if luck and luck["runs"]:
             print(f"  Random entries ({luck['runs']} runs, same frequency, holding time and stop): median "
                   f"{luck['median']:+.1f} pts, top 10% above {luck['p90']:+.1f}. The winner beat {luck['beat_pct']:.0f}%.")
@@ -454,6 +472,7 @@ def main(argv: list[str] | None = None) -> int:
     bt.set_defaults(fn=cmd_backtest)
     se = sub.add_parser("search", help="try a fixed list of strategies; test the winner on data it never saw")
     se.add_argument("symbols", nargs="*", help="default: every symbol in your strategies")
+    se.add_argument("--universe", choices=["dow2020", "sectors"], help="a fixed list chosen without hindsight")
     se.add_argument("--timeframe", default="1Hour")
     se.add_argument("--days", type=int, default=730)
     se.add_argument("--holdout", type=float, default=30.0, help="%% of the newest data kept for the final test")

@@ -33,6 +33,17 @@ from taylortrader import backtest
 from taylortrader.strategies import Bars, Signal, Strategy, get_strategy
 from taylortrader.strategies.base import NO
 
+# Fixed lists chosen by a rule, not by how they did afterward (picking past winners makes holding
+# them look unbeatable). Each is what it was on the date in its name.
+UNIVERSES = {
+    # The Dow Jones Industrial Average on 2020-01-01. UTX became RTX in April 2020 (Raytheon merger).
+    "dow2020": ("AAPL", "AXP", "BA", "CAT", "CSCO", "CVX", "DIS", "DOW", "GS", "HD", "IBM", "INTC", "JNJ", "JPM",
+                "KO", "MCD", "MMM", "MRK", "MSFT", "NKE", "PFE", "PG", "RTX", "TRV", "UNH", "V", "VZ", "WBA",
+                "WMT", "XOM"),
+    # The S&P 500 sector funds that existed in 2018 (communications, XLC, started that June).
+    "sectors": ("XLB", "XLE", "XLF", "XLI", "XLK", "XLP", "XLU", "XLV", "XLY"),
+}
+
 BUILTINS = ("macd_rsi", "macd", "ma_20", "rsi_14", "ma_20_rsi", "ma_200_rsi", "ma_20_over_200_rsi", "chaikin",
             "pullback")
 RULES = (
@@ -95,7 +106,8 @@ def evaluate(c: Candidate, frames: dict[str, pd.DataFrame], window: str, holdout
             continue
         per[sym] = {"return": r.total_return_pct, "buy_hold": r.buy_hold_return_pct,
                     "excess": r.total_return_pct - r.buy_hold_return_pct, "trades": len(r.trades),
-                    "max_dd": r.max_drawdown_pct, "exposure": r.exposure_pct}
+                    "max_dd": r.max_drawdown_pct, "buy_hold_max_dd": r.buy_hold_max_drawdown_pct,
+                    "exposure": r.exposure_pct}
         holds += [_bars_held(df, t) for t in r.trades]
     n = len(per)
     out = {"label": c.label, "candidate": asdict(c), "symbols": per,
@@ -104,6 +116,8 @@ def evaluate(c: Candidate, frames: dict[str, pd.DataFrame], window: str, holdout
            "return": statistics.mean(p["return"] for p in per.values()) if n else None,
            "buy_hold": statistics.mean(p["buy_hold"] for p in per.values()) if n else None,
            "max_dd": statistics.mean(p["max_dd"] for p in per.values()) if n else None,
+           "buy_hold_max_dd": statistics.mean(p["buy_hold_max_dd"] for p in per.values()) if n else None,
+           "exposure": statistics.mean(p["exposure"] for p in per.values()) if n else None,
            "median_bars_held": int(statistics.median(holds)) if holds else None}
     total_bars = sum(max(0, (split_at(df, holdout) if window == "search" else len(df) - split_at(df, holdout)))
                      for df in frames.values())
@@ -224,7 +238,12 @@ def verdict(held: dict, beat: float | None) -> str:
     if ex > 0:
         return (f"NOT PROVEN: beat buy-and-hold on the holdout ({ex:+.2f} pts), but only {beat:.0f}% of random "
                 f"entries did worse (needs {PASS_PERCENTILE}%). Could be luck.")
-    return f"FAILED: lost to buy-and-hold on data it never saw ({ex:+.2f} pts). Its search-period result was luck."
+    if beat is not None and beat >= PASS_PERCENTILE:
+        return (f"FAILED, with a caveat: lost to buy-and-hold on data it never saw ({ex:+.2f} pts), but its timing "
+                f"beat {beat:.0f}% of random entries. The timing has something; being out of the market part of "
+                "the time cost more than it earned.")
+    return (f"FAILED: lost to buy-and-hold on data it never saw ({ex:+.2f} pts), and its timing wasn't better "
+            "than random entries. Its search-period result was luck.")
 
 
 # --- holdout look log ------------------------------------------------------------------------------------
