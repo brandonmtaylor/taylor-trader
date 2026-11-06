@@ -20,6 +20,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 import sys
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
@@ -316,7 +317,6 @@ def _print_search(rep: dict, top: int) -> None:
 
 
 def cmd_run(args) -> int:
-    import os
 
     from taylortrader.app import build_service
     from taylortrader.service import RestartRequested
@@ -402,7 +402,7 @@ def cmd_journal(args) -> int:
 def cmd_install_service(args) -> int:
     from taylortrader.launchd import SERVICE, WATCHDOG, write_plists
 
-    project = Path(__file__).resolve().parents[2]
+    project = Path.cwd()  # the home folder: main() changes into it
     if args.dry_run:
         from taylortrader.config import save_config
 
@@ -433,7 +433,7 @@ def cmd_dashboard(args) -> int:
     if args.background or args.restart or args.foreground_again:
         from taylortrader import launchd
 
-        project = Path(__file__).resolve().parents[2]
+        project = Path.cwd()  # the home folder: main() changes into it
         if args.foreground_again:
             launchd.stop_dashboard()
             print("Stopped the background dashboard. Run `taylortrader` to start it in this terminal.")
@@ -522,7 +522,7 @@ def cmd_mcp(args) -> int:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="taylortrader", description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--config", default="config.toml", type=Path)
+    parser.add_argument("--config", type=Path, help="settings file (default: config.toml in the home folder)")
     parser.add_argument("-v", "--verbose", action="store_true")
     sub = parser.add_subparsers(dest="cmd")
     sub.add_parser("strategies").set_defaults(fn=cmd_strategies)
@@ -599,6 +599,14 @@ def main(argv: list[str] | None = None) -> int:
     if not any(a in sub.choices for a in argv) and not any(a in ("-h", "--help") for a in argv):
         argv = [*argv, "dashboard"]  # `taylortrader` alone opens the dashboard
     args = parser.parse_args(argv)
+    if args.config is None:
+        # Settings, keys (.env) and data (var/) all live in one home folder, wherever this runs from.
+        from taylortrader.home import find_home
+
+        home = find_home()
+        home.mkdir(parents=True, exist_ok=True)
+        os.chdir(home)
+        args.config = Path("config.toml")
     setup_logging(level=logging.DEBUG if args.verbose else logging.WARNING)
     try:
         return args.fn(args)

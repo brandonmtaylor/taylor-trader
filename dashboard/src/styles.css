@@ -591,7 +591,7 @@ select.input { width: 100%; }
 
 /* ---------- small screens ---------- */
 
-@media (max-width: 1180px) {
+@media (max-width: 1340px) {
   .masthead { position: static; }  /* too tall to pin once it stacks */
   .masthead__row { grid-template-columns: 1fr; gap: 10px; padding: 12px 16px; }
   .page { padding: 18px 16px 96px; }
@@ -608,7 +608,9 @@ select.input { width: 100%; }
   .panel { padding: 16px; }
   .modeband { flex-wrap: wrap; }
   .modeswitch { margin-left: 0; }
-  .brand { flex-direction: column; align-items: flex-start; gap: 8px; }
+  .brand { flex-direction: column; align-items: flex-start; gap: 8px; min-width: 0; }
+  .nav { max-width: 100%; overflow-x: auto; scrollbar-width: none; }
+  .nav a { padding: 4px 8px; font-size: 13px; white-space: nowrap; }
   .page__head { flex-direction: column; }
   .keys__form { grid-template-columns: 1fr; }
   .strat { padding: 16px; }
@@ -781,3 +783,22 @@ select.input { width: 100%; }
 .signin__card .panel__sub { margin: 0; }
 .signin__card .btn { align-self: stretch; }
 .signin__error { margin: 0; color: var(--crit); font-size: 13.5px; }
+
+/* Setup: how to get Alpaca keys */
+.howto { margin: 0 0 14px; font-size: 14px; color: var(--ink-2); }
+.howto summary { cursor: pointer; font-weight: 600; color: var(--ink); }
+.howto ol { margin: 8px 0 0; padding-left: 20px; display: grid; gap: 4px; }
+
+/* Guide */
+.guide__toc { display: flex; flex-wrap: wrap; gap: 6px 14px; margin: -6px 0 18px; font-size: 13.5px; }
+.guide__toc a { color: var(--ink-2); }
+.guide__toc a:hover { color: var(--ink); }
+.guide__section { scroll-margin-top: 80px; font-size: 14.5px; line-height: 1.55; }
+.guide__section h2 { margin: 0 0 10px; }
+.guide__section p { margin: 0 0 10px; }
+.guide__section p:last-child, .guide__section ul:last-child, .guide__section ol:last-child { margin-bottom: 0; }
+.guide__section ul, .guide__section ol { margin: 0 0 10px; padding-left: 20px; display: grid; gap: 6px; }
+.guide__dl { margin: 0; display: grid; gap: 4px 0; }
+.guide__dl dt { font-weight: 600; margin-top: 8px; }
+.guide__dl dt:first-child { margin-top: 0; }
+.guide__dl dd { margin: 0; color: var(--ink-2); }

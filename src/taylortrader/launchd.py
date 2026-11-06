@@ -14,6 +14,8 @@ import shutil
 import subprocess
 from pathlib import Path
 
+from taylortrader.home import command
+
 SERVICE = "com.taylortrader.service"
 WATCHDOG = "com.taylortrader.watchdog"
 DASHBOARD = "com.taylortrader.dashboard"
@@ -23,14 +25,7 @@ AGENTS = Path.home() / "Library" / "LaunchAgents"
 def plists(project: Path) -> dict[str, dict]:
     """Dry run, paper and live are settings in config.toml, not service arguments."""
     logs = project / "var" / "logs"
-    # Run the project's own entry point, not `uv run`: launchd stops a job with SIGTERM, and uv doesn't
-    # pass it on to Python, so every stop waited out launchd's 20 seconds and ended in a SIGKILL.
-    exe = project / ".venv" / "bin" / "taylortrader"
-    if exe.exists():
-        base = [str(exe), "--config", str(project / "config.toml")]
-    else:  # not installed yet: uv creates the environment on first run
-        uv = shutil.which("uv") or "/opt/homebrew/bin/uv"
-        base = [uv, "run", "--project", str(project), "taylortrader", "--config", str(project / "config.toml")]
+    base = [*command(project), "--config", str(project / "config.toml")]
     env = {"PATH": "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"}
     return {
         SERVICE: {

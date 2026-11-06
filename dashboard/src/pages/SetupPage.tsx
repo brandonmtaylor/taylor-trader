@@ -18,7 +18,7 @@ export function SetupPage({ store, setup, onSetup }: { store: SettingsStore; set
   if (!resp || !setup) return <main className="page"><p className="empty">{store.error ?? "Loading…"}</p></main>;
 
   const keysDone = Boolean(setup.secrets.ALPACA_PAPER_KEY_ID && setup.secrets.ALPACA_PAPER_SECRET_KEY);
-  const strategyDone = setup.has_strategy;
+  const strategyDone = setup.has_strategy || setup.has_plan;
   const limitsDone = setup.configured && resp.configured;
   const alertsDone = Boolean(setup.secrets.NTFY_TOPIC || (setup.secrets.EMAIL_PASSWORD && resp.config.alerts.email_to.length));
   const ready = keysDone && strategyDone;
@@ -36,7 +36,8 @@ export function SetupPage({ store, setup, onSetup }: { store: SettingsStore; set
           <h1>Set up TaylorTrader</h1>
           <p className="page__sub">
             Five steps, about ten minutes. Everything starts on <b>paper</b> (simulated money) in <b>dry run</b>:
-            the bot makes its decisions and tells you about them, but places no orders until you say so.
+            the bot makes its decisions and tells you about them, but places no orders until you say so. New to
+            this? The <a href="#/guide">Guide</a> explains how it all works.
           </p>
         </div>
       </header>
@@ -44,11 +45,23 @@ export function SetupPage({ store, setup, onSetup }: { store: SettingsStore; set
       <div className="stack">
         <Section id="s-keys" step={1} done={keysDone} title="Connect your Alpaca paper account"
           sub={<>In Alpaca, switch to your Paper account, open <b>API Keys</b>, and generate a pair. They're saved to the {setup.secret_store}, never to a file in this project.</>}>
+          <details className="howto">
+            <summary>No Alpaca account yet?</summary>
+            <ol>
+              <li>Sign up at <a href="https://app.alpaca.markets/signup" target="_blank" rel="noreferrer">alpaca.markets</a>.
+                A paper (practice) account is free and needs only an email: no money, no ID check.</li>
+              <li>After signing in, make sure the account switcher at the top left says <b>Paper</b>.</li>
+              <li>On the home page, find <b>API Keys</b> and choose <b>Generate New Keys</b>.</li>
+              <li>Copy both into the boxes below. Alpaca shows the secret only once; if you lose it, generate a new pair.</li>
+            </ol>
+          </details>
           <AlpacaKeys mode="paper" setup={setup} onSaved={onSetup} />
         </Section>
 
         <Section id="s-strategy" step={2} done={strategyDone} title="Pick a strategy"
-          sub="Choose how it decides, which stocks it watches, and how much each buy uses. Run a backtest to see how it would have done.">
+          sub={<>Choose how it decides, which stocks it watches, and how much each buy uses. Run a backtest to see how it
+            would have done. Honest note: in our tests no strategy beat simply buying and holding. If you'd rather
+            invest a set amount on a schedule, <a href="#/invest">set up an invest plan</a> instead and skip this step.</>}>
           <StrategyEditor value={strategy} onChange={setStrategy} catalog={resp.catalog}
             limits={resp.config.guardrails} timeframes={resp.timeframes} aiDailyLimit={resp.config.ai.max_calls_per_day} index={0} />
           <div className="saverow">

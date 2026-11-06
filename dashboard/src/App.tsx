@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { get, SIGN_IN_EVENT, type Session, type Setup, type Status } from "./api";
 import { Header } from "./components/Header";
+import { GuidePage } from "./pages/GuidePage";
 import { InvestPage } from "./pages/InvestPage";
 import { Overview } from "./pages/Overview";
 import { SettingsPage } from "./pages/SettingsPage";
@@ -10,7 +11,7 @@ import { StrategiesPage } from "./pages/StrategiesPage";
 import { useSettings } from "./settings";
 import { useNow, usePoll } from "./usePoll";
 
-const ROUTES = ["/", "/strategies", "/invest", "/settings", "/setup"] as const;
+const ROUTES = ["/", "/strategies", "/invest", "/settings", "/setup", "/guide"] as const;
 type Route = (typeof ROUTES)[number];
 
 function useRoute(): Route {
@@ -72,13 +73,13 @@ function Dashboard() {
     store.reload();
   };
 
-  const needsSetup = setup != null && (!setup.configured || !setup.has_strategy ||
+  const needsSetup = setup != null && (!setup.configured || !(setup.has_strategy || setup.has_plan) ||
     !setup.secrets.ALPACA_PAPER_KEY_ID || !setup.secrets.ALPACA_PAPER_SECRET_KEY);
   const page: Route = route === "/setup" || (needsSetup && route === "/") ? "/setup" : route;
 
   useEffect(() => {
     document.title = { "/": "TaylorTrader", "/strategies": "Strategies · TaylorTrader", "/invest": "Invest · TaylorTrader",
-      "/settings": "Settings · TaylorTrader", "/setup": "Set up · TaylorTrader" }[page];
+      "/settings": "Settings · TaylorTrader", "/setup": "Set up · TaylorTrader", "/guide": "Guide · TaylorTrader" }[page];
   }, [page]);
 
   return (
@@ -90,6 +91,7 @@ function Dashboard() {
       {page === "/invest" && <InvestPage />}
       {page === "/settings" && <SettingsPage store={store} setup={setup} onSetup={onSetup} />}
       {page === "/setup" && <SetupPage store={store} setup={setup} onSetup={onSetup} />}
+      {page === "/guide" && <GuidePage />}
       <footer className="foot">
         Runs on this computer only. Not financial advice. TaylorTrader is open-source software you run on your
         own account.

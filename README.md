@@ -1,12 +1,19 @@
 # TaylorTrader
 
-An open-source autonomous trading bot for [Alpaca](https://alpaca.markets), built safety-first.
+An open-source trading bot and long-term investing autopilot for [Alpaca](https://alpaca.markets),
+built safety-first. It runs on your Mac, with a local dashboard, phone alerts, and a built-in guide.
 
 > **Not financial advice.** TaylorTrader is software you run on your own account, with your own keys.
 > It trades on **paper** unless you explicitly turn live trading on. Most trading strategies lose to
 > buy-and-hold; the backtester always shows you that comparison.
 
-**Status:** early. Milestone 1 (a safe bot on paper) is in progress. See [docs/PLAN.md](docs/PLAN.md).
+**Status:** early, and in a paper-trading trial. See [docs/PLAN.md](docs/PLAN.md).
+
+**What testing found, honestly:** on the 30 Dow stocks and 9 sector funds over several years, none of
+the built-in strategies beat buying and holding once tested on data they hadn't seen. Some had
+smaller drops along the way. They're here to experiment with and build on, and the tools to test an
+idea properly (`taylortrader search`: held-back data, plus a check against random entries) are
+included. If you mainly want to invest steadily, use the invest plan.
 
 ## What makes it safer
 - **Stops live at the broker.** Every entry is an OTO/bracket order with a GTC stop-loss held by Alpaca,
@@ -20,11 +27,26 @@ An open-source autonomous trading bot for [Alpaca](https://alpaca.markets), buil
 - **Live trading needs two things:** live keys that open an active account, and typing `GO LIVE`
   in the dashboard (which sets `TAYLORTRADER_ALLOW_LIVE`; switching back to paper removes it).
 
-## Quick start
+## Install
+You need a Mac and a free [Alpaca](https://app.alpaca.markets/signup) paper account (email only, no money).
 ```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh   # once, if you don't have uv
+uv tool install taylortrader
+taylortrader                                      # opens the dashboard and walks you through setup
+```
+Settings, the trade journal and logs live in `~/Library/Application Support/TaylorTrader`; keys go
+in the Keychain. Update with `uv tool upgrade taylortrader`. The dashboard's **Guide** page explains
+everything below in plain language.
+
+Linux works for the dashboard, backtests and a foreground `taylortrader run`; keeping it running in
+the background is set up for macOS only so far.
+
+### From source
+```bash
+git clone <this repo> && cd taylor-trader
 uv sync
 cd dashboard && npm install && npm run build && cd ..   # once, and after UI changes
-uv run taylortrader                                     # opens the dashboard and walks you through setup
+uv run taylortrader                                     # uses this folder for settings and data
 ```
 Setup takes about ten minutes: connect your Alpaca **paper** keys (tested, then saved to the macOS
 Keychain, or a mode-600 `.env` elsewhere), pick a strategy and backtest it, check the safety

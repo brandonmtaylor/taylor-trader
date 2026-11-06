@@ -57,7 +57,6 @@ from taylortrader.web.runtime import Runtime
 
 log = logging.getLogger(__name__)
 STATIC = Path(__file__).parent / "static"
-PROJECT = Path(__file__).resolve().parents[3]
 BENCHMARK = "SPY"
 GO_LIVE_PHRASE = "GO LIVE"
 CASH_YIELD = 4.0  # % a year on uninvested cash in backtests, so time out of the market isn't scored as 0%
@@ -189,9 +188,11 @@ OPEN_PATHS = {"/api/session", "/api/login"}
 MAC_ONLY = "Going live and API keys can only be changed on the Mac running TaylorTrader."
 
 
-def create_app(rt: Runtime, cache_ttl: float = 10.0, project: Path = PROJECT,
+def create_app(rt: Runtime, cache_ttl: float = 10.0, project: Path | None = None,
                passcode: str | None = None) -> FastAPI:
-    """`passcode` set means Wi-Fi access is on: other devices may connect, after signing in."""
+    """`project` is the home folder (default: the current one; the command line changes into it).
+    `passcode` set means Wi-Fi access is on: other devices may connect, after signing in."""
+    project = project or Path.cwd()
     app = FastAPI(title="TaylorTrader", docs_url=None, redoc_url=None, openapi_url=None)
     sessions = Sessions(passcode) if passcode else None
     name = mac_name() if passcode else None
@@ -282,6 +283,7 @@ def create_app(rt: Runtime, cache_ttl: float = 10.0, project: Path = PROJECT,
             "mode": cfg.mode,
             "dry_run": cfg.dry_run,
             "has_strategy": bool(cfg.enabled_strategies),
+            "has_plan": cfg.invest.enabled and bool(cfg.invest.holdings),
             "secret_store": "Keychain" if keychain_available() else ".env",
             "secrets": {n: secret_source(n, rt.dotenv_path) for n in SETTABLE},
             "service": launchd.status(),

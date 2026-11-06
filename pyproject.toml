@@ -6,6 +6,14 @@ readme = "README.md"
 license = "Apache-2.0"
 requires-python = ">=3.12"
 authors = [{ name = "Brandon Taylor" }]
+keywords = ["trading", "alpaca", "trading-bot", "investing", "backtesting"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: End Users/Desktop",
+    "Operating System :: MacOS",
+    "Programming Language :: Python :: 3",
+    "Topic :: Office/Business :: Financial :: Investment",
+]
 dependencies = [
     # alpaca-py is pre-1.0 and changes often: pin exactly, upgrade on purpose.
     "alpaca-py==0.44.0",
@@ -38,6 +46,11 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/taylortrader", "src/guardrails"]
+# The built dashboard is git-ignored (it's generated) but ships in the wheel, so installing needs no Node.
+artifacts = ["src/taylortrader/web/static/**"]
+
+[tool.hatch.build.targets.sdist]
+artifacts = ["src/taylortrader/web/static/**"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

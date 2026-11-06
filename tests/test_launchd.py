@@ -28,3 +28,30 @@ def test_stopping_the_bot_never_stops_the_dashboard(tmp_path, monkeypatch):
     monkeypatch.setattr(launchd, "status", lambda label, dest=None: {"loaded": True})
     launchd.stop(dest=tmp_path)
     assert all(launchd.DASHBOARD not in " ".join(c) for c in calls)
+
+
+def test_home_folder(tmp_path, monkeypatch):
+    from taylortrader import home
+
+    monkeypatch.delenv(home.HOME_VAR, raising=False)
+    monkeypatch.setattr(home, "default_home", lambda: tmp_path / "AppSupport")
+    assert home.find_home(tmp_path) == tmp_path / "AppSupport"          # a random folder: the default home
+    (tmp_path / "config.toml").write_text("")
+    assert home.find_home(tmp_path) == tmp_path                         # a folder with settings: that one
+    co = tmp_path / "co"
+    co.mkdir()
+    (co / "pyproject.toml").write_text('[project]\nname = "taylortrader"\n')
+    assert home.find_home(co) == co                                     # a source checkout
+    monkeypatch.setenv(home.HOME_VAR, str(tmp_path / "x"))
+    assert home.find_home(co) == tmp_path / "x"                         # the override wins
+
+
+def test_background_jobs_prefer_the_checkout_then_the_installed_command(tmp_path, monkeypatch):
+    from taylortrader import home
+
+    monkeypatch.setattr(home.shutil, "which", lambda n: f"/usr/local/bin/{n}")
+    assert home.command(tmp_path) == ["/usr/local/bin/taylortrader"]
+    exe = tmp_path / ".venv" / "bin" / "taylortrader"
+    exe.parent.mkdir(parents=True)
+    exe.write_text("")
+    assert home.command(tmp_path) == [str(exe)]

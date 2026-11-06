@@ -55,6 +55,7 @@ const NAV = [
   { href: "#/strategies", label: "Strategies" },
   { href: "#/invest", label: "Invest" },
   { href: "#/settings", label: "Settings" },
+  { href: "#/guide", label: "Guide" },
 ];
 
 export function Header({ status, setup, now, error, route, onStatus, onSetup }: {

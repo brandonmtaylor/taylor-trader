@@ -162,6 +162,7 @@ export interface Setup {
   mode: "paper" | "live";
   dry_run: boolean;
   has_strategy: boolean;
+  has_plan: boolean;
   secret_store: "Keychain" | ".env";
   /** where each secret is stored, or null. Never the value. */
   secrets: Record<SecretName, string | null>;
