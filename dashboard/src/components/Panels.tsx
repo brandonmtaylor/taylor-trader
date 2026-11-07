@@ -362,21 +362,14 @@ export function Strategies({ status }: { status: Status | null }) {
 }
 
 export function PastResults({ history, error }: { history: History | null; error: string | null }) {
-  if (!history && error) {
-    return (
-      <section className="panel" aria-labelledby="hist-title">
-        <h2 id="hist-title">The original bot</h2>
-        <p className="empty">Can't load past results: {error}</p>
-      </section>
-    );
-  }
-  if (!history || history.closed_trades === 0) return null;
+  // Only shown to someone who imported trades (`taylortrader journal --import-legacy`).
+  if (error || !history || history.closed_trades === 0) return null;
   const max = Math.max(...history.by_year.map((y) => Math.abs(y.profit)), 1);
   return (
     <section className="panel" aria-labelledby="hist-title">
       <div className="panel__head">
         <div>
-          <h2 id="hist-title">The original bot</h2>
+          <h2 id="hist-title">Imported trades</h2>
           <p className="panel__sub">
             {history.closed_trades} closed trades, {money0(history.realized)} realized. Imported history.
           </p>
