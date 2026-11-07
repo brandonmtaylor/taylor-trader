@@ -4,6 +4,7 @@ from types import SimpleNamespace
 import numpy as np
 import pandas as pd
 import pytest
+from alpaca.trading.enums import OrderSide
 
 from guardrails import OrderIntent, Side
 from taylortrader import backtest, indicators
@@ -177,3 +178,33 @@ def test_cash_moved_is_checked_every_few_minutes_and_survives_a_failure():
     b._client.rows = ConnectionError("down")
     assert b.cash_moved_today() == 50
     assert _flow_broker(ConnectionError("down")).snapshot().day_start_equity == 1000
+
+
+# --- trades per day ---------------------------------------------------------------------------------
+
+class OrdersClient:
+    def __init__(self, orders):
+        self.orders, self.requests = orders, []
+
+    def get_orders(self, req):
+        self.requests.append(req)
+        return self.orders
+
+
+def _order(cid, status="filled", filled=1.0):
+    return SimpleNamespace(client_order_id=cid, status=SimpleNamespace(value=status), filled_qty=filled)
+
+
+def test_trades_today_counts_only_strategy_buys():
+    b = AlpacaBroker.__new__(AlpacaBroker)
+    b._client = OrdersClient([
+        _order("tt-macd_rsi-VRT-1"), _order("tt-ai-NVDA-2", "new", 0),  # filled, and one still working
+        _order("tt-invest-2026-11-VTI-1"), _order(None), _order("manual-order"),  # plan, yours, yours
+        _order("tt-breakout-AAPL-3", "canceled", 0), _order("tt-breakout-AAPL-4", "canceled", 2.0),
+    ])
+    assert b.trades_today() == 3
+    req = b._client.requests[0]
+    assert req.side == OrderSide.BUY and req.after.tzinfo is not None and req.after.hour == 0
+    b._client.orders = [_order("tt-x-Y-1")] * 500
+    assert b.trades_today() == 500  # a full page can't be counted: assume the limit is hit
+

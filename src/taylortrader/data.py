@@ -36,16 +36,28 @@ TIMEFRAMES = {
     "1Hour": TimeFrame(1, TimeFrameUnit.Hour),
     "1Day": TimeFrame(1, TimeFrameUnit.Day),
 }
+# Fetched only to build hourly bars that line up with the 9:30 open; not a strategy timeframe.
+FETCH_TIMEFRAMES = {**TIMEFRAMES, "30Min": TimeFrame(30, TimeFrameUnit.Minute)}
 COLUMNS = ["open", "high", "low", "close", "volume"]
 SIP_DELAY = timedelta(minutes=16)
 
 
 def regular_hours(df: pd.DataFrame) -> pd.DataFrame:
-    """Keep bars starting 9:30-16:00 New York time (intraday timeframes only). Hourly bars start on
-    the hour, so the 9:00 bar goes too: a regular day is six hourly bars, and 9:30-10:00 is in none."""
+    """Keep bars starting 9:30-16:00 New York time (intraday timeframes only)."""
     et = df.index.tz_convert("America/New_York")
     minutes = et.hour * 60 + et.minute
     return df[(minutes >= 9 * 60 + 30) & (minutes < 16 * 60)]
+
+
+def hourly_from_half_hours(df: pd.DataFrame) -> pd.DataFrame:
+    """Hourly bars that start at 9:30, 10:30 ... 15:30 (the last one half an hour). Alpaca's start on
+    the hour, so keeping regular hours used to drop 9:30-10:00, the busiest half hour of the day."""
+    if df.empty:
+        return df
+    et = df.tz_convert("America/New_York")
+    out = et.resample("60min", offset="30min", label="left", closed="left").agg(
+        {"open": "first", "high": "max", "low": "min", "close": "last", "volume": "sum"})
+    return out.dropna(subset=["close"]).tz_convert("UTC")
 
 
 class MarketData:
@@ -64,7 +76,7 @@ class MarketData:
     def _fetch(self, symbol: str, timeframe: str, start: datetime, end: datetime) -> pd.DataFrame:
         req = StockBarsRequest(
             symbol_or_symbols=symbol,
-            timeframe=TIMEFRAMES[timeframe],
+            timeframe=FETCH_TIMEFRAMES[timeframe],
             start=start,
             end=end,
             feed=DataFeed.SIP if self.feed == "sip" else DataFeed.IEX,
@@ -87,6 +99,13 @@ class MarketData:
     ) -> pd.DataFrame:
         if timeframe not in TIMEFRAMES:
             raise ValueError(f"timeframe must be one of {list(TIMEFRAMES)}")
+        if timeframe == "1Hour" and regular_session:
+            return hourly_from_half_hours(self._stored(symbol, "30Min", start, end, regular_session=True))
+        return self._stored(symbol, timeframe, start, end, regular_session)
+
+    def _stored(self, symbol: str, timeframe: str, start: datetime, end: datetime | None,
+                regular_session: bool) -> pd.DataFrame:
+        """Bars from the cache, topped up from Alpaca."""
         now = datetime.now(UTC)
         end = min(end or now, now - SIP_DELAY) if self.feed == "sip" else (end or now)
 

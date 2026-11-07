@@ -101,3 +101,24 @@ def test_a_split_rebuilds_the_cache_instead_of_showing_a_crash(tmp_path):
     md._fetch = after_split
     df = md.bars("X", "1Day", start, datetime(2026, 1, 4, tzinfo=UTC))
     assert len(calls) == 2 and set(df["close"]) == {50.0}
+
+
+def test_hourly_bars_start_at_the_open(tmp_path):
+    from taylortrader.data import MarketData
+
+    # Tuesday 9:30-16:00 New York in half hours (14:30-21:00 UTC), close = minute of the day
+    idx = pd.date_range("2026-11-03 14:30", periods=13, freq="30min", tz="UTC")
+    half = pd.DataFrame({"open": range(13), "high": range(13), "low": range(13), "close": range(13),
+                         "volume": 1.0}, index=idx).astype(float)
+    asked = []
+    md = MarketData.__new__(MarketData)
+    md.cache_dir, md.feed = tmp_path, "iex"
+    md._fetch = lambda sym, tf, s, e: asked.append(tf) or half
+    out = md.bars("VRT", "1Hour", datetime(2026, 11, 3, 14, 0, tzinfo=UTC), datetime(2026, 11, 3, 22, 0, tzinfo=UTC))
+    times = [t.strftime("%H:%M") for t in out.index.tz_convert("America/New_York")]
+    assert asked == ["30Min"]
+    assert times == ["09:30", "10:30", "11:30", "12:30", "13:30", "14:30", "15:30"]
+    first = out.iloc[0]
+    assert (first.open, first.high, first.low, first.close, first.volume) == (0, 1, 0, 1, 2)
+    assert out.iloc[-1].volume == 1  # 15:30-16:00 is half an hour
+

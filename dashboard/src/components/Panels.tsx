@@ -131,7 +131,7 @@ export function Vitals({ account, status, error }: { account: Account | null; st
         </span>
       </div>
       <div className="vital">
-        <span className="vital__label">Trades today</span>
+        <span className="vital__label">Strategy buys today</span>
         <span className="vital__value">
           {account?.trades_today ?? "—"}
           {status && <small> of {status.limits.max_trades_per_day} max</small>}

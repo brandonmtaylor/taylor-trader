@@ -794,3 +794,18 @@ def test_no_note_when_holding_paused_turned_off_or_before_the_close(svc):
 def test_no_trades_days_is_checked(tmp_path):
     with pytest.raises(ConfigError, match="no_trades_days"):
         parse_config({"service": {"no_trades_days": 400}})
+
+
+def test_open_orders_are_read_once_per_check(svc):
+    svc.cfg.strategies[0] = dataclasses.replace(svc.cfg.strategies[0], symbols=["VRT", "NVDA", "AAPL"])
+    svc.strategy_for.update({s: svc.strategy_for["VRT"] for s in ("NVDA", "AAPL")})
+    svc.owner.update({s: svc.cfg.strategies[0] for s in ("NVDA", "AAPL")})
+    calls = []
+    real = svc.broker.open_orders
+    svc.broker.open_orders = lambda: calls.append(1) or real()
+    svc.broker.orders = [SimpleNamespace(symbol="NVDA", side=SimpleNamespace(value="buy"))]
+    FLAGS["entry"] = True
+    svc.tick()
+    assert len(calls) == 1
+    assert sorted(i.symbol for i in svc.broker.entries) == ["AAPL", "VRT"]  # NVDA already has a buy working
+

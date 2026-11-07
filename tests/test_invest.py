@@ -94,6 +94,17 @@ def test_weekly_two_weekly_once_start_and_until():
     assert invest.due_period(plan(until="2026-10-31"), date(2026, 11, 20)) is None
 
 
+def test_next_due_skips_market_holidays():
+    thanksgiving = date(2026, 11, 26)
+    open_days = {date(2026, 11, 1) + timedelta(days=k) for k in range(30)} - {thanksgiving}
+    open_days = {d for d in open_days if d.weekday() < 5}
+    weekly = plan(every="week", day=3)  # Thursdays
+    assert invest.next_due(weekly, date(2026, 11, 23), set(), open_days)[0] == date(2026, 11, 27)
+    assert invest.next_due(weekly, date(2026, 11, 23), set())[0] == thanksgiving  # without the calendar
+    # past the end of the calendar it knows, weekdays count again
+    assert invest.next_due(plan(), date(2026, 11, 30), {"2026-11"}, open_days) == (date(2026, 12, 1), "2026-12")
+
+
 def test_next_due_skips_done_periods_and_weekends():
     p = plan(day=1)
     assert invest.next_due(p, date(2026, 11, 4), set()) == (date(2026, 11, 4), "2026-11")

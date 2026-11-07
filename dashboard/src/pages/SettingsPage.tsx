@@ -74,7 +74,7 @@ export function LimitsSection({ store, step, done, saveLabel }: { store: Setting
         {row("max_position_pct", "One position", "Most of your account in a single stock", "%")}
         {row("max_total_exposure_pct", "Everything invested", "Most of your account in stocks at once", "%")}
         {row("max_daily_loss_pct", "Daily loss", "Stop buying for the day after losing this much", "%")}
-        {row("max_trades_per_day", "Trades per day", "Most buys and sells in one day")}
+        {row("max_trades_per_day", "Buys per day", "By your strategies. Sells, stop-losses and invest-plan buys don't count")}
         {row("max_stop_loss_pct", "Widest stop-loss", "No strategy can set a looser stop", "%")}
       </div>
       <SaveRow dirty={s.dirty || (!!step && !done)} busy={s.act.busy} onSave={() => s.save("Limits saved.")} onReset={s.reset} label={saveLabel} />

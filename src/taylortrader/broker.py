@@ -37,7 +37,17 @@ CASH_FLOWS = "CSD,CSW,JNLC,ACATC"
 CASH_FLOW_TTL_S = 300
 
 _STOP_TYPES = {OrderType.STOP, OrderType.STOP_LIMIT, OrderType.TRAILING_STOP}
+TRADES_PAGE = 500  # Alpaca's largest page of orders
+_NO_FILL = {"canceled", "expired", "rejected"}
 
+
+def is_strategy_buy(o) -> bool:
+    """A buy a strategy placed: the service tags them tt-<strategy>-..., invest-plan buys tt-invest-...."""
+    cid = o.client_order_id or ""
+    if not cid.startswith("tt-") or cid.startswith("tt-invest-"):
+        return False
+    status = str(getattr(o.status, "value", o.status))
+    return status not in _NO_FILL or float(o.filled_qty or 0) > 0
 
 class BrokerError(RuntimeError):
     pass
@@ -164,11 +174,20 @@ class AlpacaBroker:
         return amount
 
     def trades_today(self) -> int:
-        start = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
-        orders = self._client.get_orders(
-            GetOrdersRequest(status=QueryOrderStatus.CLOSED, after=start, limit=500)
-        )
-        return sum(1 for o in orders if o.filled_at is not None)
+        """Buys the strategies placed today (New York day), which is what max_trades_per_day limits.
+        Sells, stop-losses, invest-plan buys and your own trades don't count. A buy still waiting
+        counts; one canceled or rejected without filling doesn't."""
+        start = datetime.now(NY).replace(hour=0, minute=0, second=0, microsecond=0)
+        orders = self._client.get_orders(GetOrdersRequest(status=QueryOrderStatus.ALL, after=start,
+                                                          side=OrderSide.BUY, limit=TRADES_PAGE))
+        if len(orders) >= TRADES_PAGE:  # more than one page: can't count exactly, so assume the limit is hit
+            log.warning("over %d buys today; treating the trades-per-day limit as reached", TRADES_PAGE)
+            return TRADES_PAGE
+        return sum(1 for o in orders if is_strategy_buy(o))
+
+    def market_days(self, start: date, end: date) -> set[date]:
+        """Days the market is open, from Alpaca's calendar (holidays left out)."""
+        return {d.date for d in self._client.get_calendar(GetCalendarRequest(start=start, end=end))}
 
     def portfolio_history(self, period: str = "1M") -> list[tuple[int, float]]:
         """Daily account equity as (unix seconds, equity), skipping days before the account had money."""

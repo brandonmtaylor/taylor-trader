@@ -93,11 +93,14 @@ def cents(v: float) -> float:
     return math.floor(v * 100 + 1e-6) / 100
 
 
-def next_due(inv: InvestConfig, today: date, done: set[str]) -> tuple[date, str] | None:
-    """The next day a contribution will go in, skipping periods already done. None if the plan's over."""
+def next_due(inv: InvestConfig, today: date, done: set[str],
+             open_days: set[date] | None = None) -> tuple[date, str] | None:
+    """The next day a contribution will go in, skipping periods already done. None if the plan's over.
+    open_days (from the market calendar) skips holidays; past its end, or without it, weekdays count."""
+    known_until = max(open_days) if open_days else None
     for k in range(400):
         d = today + timedelta(days=k)
-        if d.weekday() >= 5:
+        if d.weekday() >= 5 or (known_until and d <= known_until and d not in open_days):
             continue
         p = due_period(inv, d)
         if p and p not in done:
@@ -157,6 +160,19 @@ class InvestRunner:
         self.cfg, self.broker, self.journal, self.alerts = cfg, broker, journal, alerts
         self.guardrails, self.now, self.dry_run = guardrails, now, dry_run
         self._assets_ok: tuple[date, list[str]] | None = None  # (day checked, problems)
+        self._calendar: tuple[date, set[date] | None] | None = None  # (day checked, open days)
+
+    def _open_days(self, today: date) -> set[date] | None:
+        """Market days for the next ~13 months, checked once a day. None if the calendar can't be read."""
+        if self._calendar and self._calendar[0] == today:
+            return self._calendar[1]
+        try:
+            days = self.broker.market_days(today, today + timedelta(days=400))
+        except Exception as e:  # noqa: BLE001 - weekdays are a fine stand-in
+            log.info("market calendar unavailable: %s", e)
+            days = None
+        self._calendar = (today, days)
+        return days
 
     @property
     def inv(self) -> InvestConfig:
@@ -173,7 +189,7 @@ class InvestRunner:
         upcoming = 0.0
         if self.inv.enabled and self.inv.reserve and self.mode != "preview":
             today = self.now().astimezone(NY).date()
-            if next_due(self.inv, today, self.journal.invest_periods(self.mode)):
+            if next_due(self.inv, today, self.journal.invest_periods(self.mode), self._open_days(today)):
                 upcoming = self.inv.amount
         return held + upcoming
 
@@ -308,7 +324,7 @@ class InvestRunner:
         now_ny = self.now().astimezone(NY)
         # After the close, today's chance has passed: the earliest buy is the next day.
         first = now_ny.date() + timedelta(days=1 if (now_ny.hour, now_ny.minute) >= (16, 0) else 0)
-        nxt = next_due(inv, first, self.journal.invest_periods(mode)) if inv.enabled else None
+        nxt = next_due(inv, first, self.journal.invest_periods(mode), self._open_days(now_ny.date())) if inv.enabled else None
         upcoming = None
         if nxt:
             amount = inv.amount if mode == "preview" else min(inv.amount, snap.cash)

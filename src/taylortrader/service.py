@@ -110,6 +110,7 @@ class Service:
                 self.strategy_for[sym] = strat
         self.owner: dict[str, StrategyConfig] = {s: sc for sc in self.cfg.enabled_strategies for s in sc.symbols}
         self.last_bar: dict[tuple[str, str], pd.Timestamp] = {}
+        self.open_buys: set[str] | None = None  # symbols with a buy working, read once per check
         self.last_new_bar: dict[tuple[str, str], datetime] = {}  # when each one last got a new bar
         self.session_date = None
         self.session_start = None
@@ -176,6 +177,7 @@ class Service:
 
     def tick(self) -> float:
         self.executor.inflight.clear()
+        self.open_buys = None
         self.journal.beat("dry-run" if self.dry_run else "ok")
         self._ping_healthcheck()
         self._check_kill_switch()
@@ -433,8 +435,10 @@ class Service:
                 # stopped updating. Buying now would size and set the stop from a stale price.
                 log.info("%s %s: newest bar %s is stale; no entry", sc.name, symbol, bar_ts)
                 return
-            if any(o.symbol == symbol and o.side.value == "buy" for o in self.broker.open_orders()):
-                return  # a buy is already working
+            if self.open_buys is None:
+                self.open_buys = {o.symbol for o in self.broker.open_orders() if o.side.value == "buy"}
+            if symbol in self.open_buys:
+                return  # a buy is already working (ones sent this check are in executor.inflight)
             sig = strat.entry(b, i)
             if sig:
                 # One order per strategy, symbol and bar, even across restarts or a retried request.
