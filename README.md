@@ -10,8 +10,7 @@ safety-first. It runs on your own computer, with a local dashboard, phone alerts
 > money, and you're responsible for every order it places. It's provided as is, with no warranty
 > (see the [license](https://github.com/brandonmtaylor/taylor-trader/blob/main/LICENSE.md)).
 
-**Status:** early, and in a paper-trading trial. See the
-[plan](https://github.com/brandonmtaylor/taylor-trader/blob/main/docs/PLAN.md).
+**Status:** early, and in a paper-trading trial.
 
 ## What it does
 
