@@ -149,13 +149,39 @@ const FEEDS: { id: ConfigDict["feed"]; title: string; text: string }[] = [
   { id: "iex", title: "Alpaca IEX", text: "Official and real time, but only one exchange (about 2–3% of trading). Prices are close; volume is thin." },
 ];
 
-function ClaudeSection({ store }: { store: SettingsStore }) {
+function CopyBlock({ text, label }: { text: string; label: string }) {
+  const [copied, setCopied] = useState(false);
+  const copy = async () => {
+    try { await navigator.clipboard.writeText(text); setCopied(true); setTimeout(() => setCopied(false), 1500); }
+    catch { setCopied(false); }  // not allowed here (e.g. a phone over http): the text can still be selected
+  };
+  return (
+    <div className="copyblock">
+      <pre aria-label={label}><code>{text}</code></pre>
+      <button type="button" className="btn btn--sm" onClick={copy}>{copied ? "Copied" : "Copy"}</button>
+    </div>
+  );
+}
+
+function ClaudeSection({ store, setup }: { store: SettingsStore; setup: Setup }) {
   const s = useSection(store, "mcp");
   if (!s.draft) return null;
   const d = s.draft;
   return (
     <Section id="claude" title="Claude"
-      sub="What Claude may do when you connect it to the bot (optional; see the Guide). It can always read, pause new buys, and change strategies.">
+      sub="Optional. Connect Claude and ask it how the bot is doing, describe a strategy for it to write and test, or pause new buys. It follows the same limits as this page.">
+      <h3 className="subhead">Connect</h3>
+      <p className="field__hint">
+        <b>Claude Code:</b> install it from claude.com/claude-code, then run this once in Terminal.
+      </p>
+      <CopyBlock label="Claude Code command" text={setup.mcp.claude_code} />
+      <p className="field__hint">
+        <b>Claude desktop app:</b> Settings → Developer → Edit Config, put this in the file (merge it if the
+        file already has <code>mcpServers</code>), then quit and reopen the app.
+      </p>
+      <CopyBlock label="Claude desktop app config" text={setup.mcp.desktop_config} />
+      <p className="field__hint">Then ask Claude "how's my trading bot doing?" to check it works.</p>
+      <h3 className="subhead">What Claude may do</h3>
       <div className="toggles">
         <Toggle checked={d.allow_live_selling} onChange={(allow_live_selling) => s.setDraft({ ...d, allow_live_selling })}
           label="Let Claude sell on a live account" />
@@ -372,7 +398,7 @@ export function SettingsPage({ store, setup, onSetup }: { store: SettingsStore; 
         <LimitsSection store={store} />
         <AlertsSection store={store} setup={setup} onSetup={onSetup} />
         <AISection store={store} setup={setup} onSetup={onSetup} />
-        <ClaudeSection store={store} />
+        <ClaudeSection store={store} setup={setup} />
         <DataSection store={store} />
         <ServiceSection store={store} setup={setup} onSetup={onSetup} />
       </div>

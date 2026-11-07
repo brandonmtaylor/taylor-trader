@@ -805,3 +805,8 @@ select.input { width: 100%; }
 .guide__dl dt { font-weight: 600; margin-top: 8px; }
 .guide__dl dt:first-child { margin-top: 0; }
 .guide__dl dd { margin: 0; color: var(--ink-2); }
+
+.copyblock { display: flex; gap: 8px; align-items: flex-start; margin: 4px 0 12px; }
+.copyblock pre { flex: 1; min-width: 0; margin: 0; padding: 8px 10px; overflow-x: auto; font-size: 12.5px;
+  background: var(--sunk); border: 1px solid var(--rule-soft); border-radius: 8px; }
+.copyblock code { background: none; border: 0; padding: 0; }

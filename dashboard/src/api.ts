@@ -167,6 +167,8 @@ export interface Setup {
   /** where each secret is stored, or null. Never the value. */
   secrets: Record<SecretName, string | null>;
   service: ServiceState;
+  /** commands that connect Claude to this install */
+  mcp: { claude_code: string; desktop_config: string };
 }
 
 export interface ConfigDict {

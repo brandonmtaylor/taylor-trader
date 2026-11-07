@@ -102,10 +102,24 @@ home network you trust; for anywhere else, put the Mac and phone on [Tailscale](
 ## Talk to it from Claude (MCP)
 TaylorTrader includes an MCP server, so Claude Code or the Claude desktop app can check on the bot and
 adjust it: "how did the AI strategy do this week?", "move PLTR to macd_rsi", "backtest rsi_14 on NVDA
-hourly", or describe an idea and let Claude write the rules and test it.
-```bash
-claude mcp add taylortrader --scope user -- taylortrader mcp
-```
+hourly", or describe an idea and let Claude write the rules and test it. It's optional; the bot runs
+the same without it.
+
+- **Claude Code:** [install it](https://claude.com/claude-code), then run once:
+  ```bash
+  claude mcp add taylortrader --scope user -- taylortrader mcp
+  ```
+- **Claude desktop app:** Settings, then Developer, then Edit Config. Add this to the file (merge it if
+  it already has `mcpServers`) and reopen the app:
+  ```json
+  { "mcpServers": { "taylortrader": { "command": "/full/path/to/taylortrader", "args": ["mcp"] } } }
+  ```
+  The desktop app needs the full path (`which taylortrader` prints it).
+
+The dashboard's **Settings** page, under Claude, shows both filled in for your computer, with copy
+buttons. Then ask Claude "how's my trading bot doing?" to check it's connected. The dashboard doesn't
+need to be open.
+
 It uses the same rules as the dashboard: every change is checked, hard limits still apply, and changes
 are logged as coming from Claude. It can't go live, read or change keys, loosen limits on a live
 account, or turn buying back on after you pause it. Selling on a live account is off unless you turn

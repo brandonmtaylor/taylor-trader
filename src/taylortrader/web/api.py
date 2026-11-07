@@ -42,6 +42,7 @@ from taylortrader.config import (
 )
 from taylortrader.guardrails import find_unmanaged_positions
 from taylortrader.guardrails.limits import HARD_LIMITS
+from taylortrader.home import mcp_setup
 from taylortrader.invest import NY
 from taylortrader.logging_setup import redact
 from taylortrader.secrets import (
@@ -342,6 +343,7 @@ def create_app(rt: Runtime, cache_ttl: float = 10.0, project: Path | None = None
             "secret_store": "Keychain" if keychain_available() else ".env",
             "secrets": {n: secret_source(n, rt.dotenv_path) for n in SETTABLE},
             "service": launchd.status(),
+            "mcp": mcp_setup(Path(rt.config_path).parent),
         }
 
     @app.get("/api/session")

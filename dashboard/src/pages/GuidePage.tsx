@@ -121,10 +121,10 @@ const SECTIONS: { id: string; title: string; body: ReactNode }[] = [
     body: (
       <p>TaylorTrader includes an MCP server, so Claude can check on it and adjust it for you: "how did the bot
         do this week?", "pause new buys". It follows the same rules as this dashboard, and it can't go live or see
-        your keys. To connect it, run{" "}
-        <code>claude mcp add taylortrader --scope user -- taylortrader mcp</code>. A setting in{" "}
-        <a href="#/settings">Settings</a> (Mac only) controls whether Claude may sell on a live account. It's off
-        by default.</p>
+        your keys. It's optional, and works with Claude Code or the Claude desktop app: the{" "}
+        <a href="#/settings">Settings</a> page, under Claude, shows the exact command or config for this Mac, with a
+        copy button. A setting there (Mac only) controls whether Claude may sell on a live account. It's off by
+        default.</p>
     ),
   },
   {

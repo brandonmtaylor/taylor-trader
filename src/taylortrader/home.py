@@ -55,3 +55,26 @@ def command(home: Path) -> list[str]:
         return [installed]
     uv = shutil.which("uv") or "/opt/homebrew/bin/uv"
     return [uv, "run", "--project", str(home), "taylortrader"]
+
+
+def mcp_setup(home: Path) -> dict[str, str]:
+    """The exact commands that connect Claude to this install, for the Settings page. Uses the
+    command that's running now, so it works from launchd, a checkout or an installed tool."""
+    import json
+    import shlex
+
+    running = Path(sys.argv[0]) if sys.argv and sys.argv[0] else None
+    if running and running.name == "taylortrader" and running.exists():
+        cmd = [str(running.absolute())]
+    else:
+        cmd = command(home)
+    cmd = [*cmd, "mcp"]
+    home = home.absolute()
+    env = {} if home == default_home().absolute() else {HOME_VAR: str(home)}
+    flags = "".join(f"-e {k}={shlex.quote(v)} " for k, v in env.items())
+    server = {"command": cmd[0], "args": cmd[1:], **({"env": env} if env else {})}
+    return {
+        "claude_code": f"claude mcp add taylortrader --scope user {flags}-- {shlex.join(cmd)}",
+        "desktop_config": json.dumps({"mcpServers": {"taylortrader": server}}, indent=2),
+    }
+

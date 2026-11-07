@@ -104,3 +104,22 @@ def test_background_dashboard_wont_pretend_to_use_another_port(capsys, monkeypat
     monkeypatch.setattr(launchd, "restart_dashboard", lambda *a: pytest.fail("restarted"))
     assert run("dashboard", flag, "--port", "9000") == 2
     assert "always uses port 8787" in capsys.readouterr().err
+
+
+def test_mcp_setup_commands(tmp_path, monkeypatch):
+    import json
+
+    from taylortrader import home
+
+    exe = tmp_path / "bin" / "taylortrader"
+    exe.parent.mkdir()
+    exe.write_text("")
+    monkeypatch.setattr("sys.argv", [str(exe), "dashboard"])
+    monkeypatch.setattr(home, "default_home", lambda: tmp_path / "default")
+    installed = home.mcp_setup(tmp_path / "default")
+    assert installed["claude_code"] == f"claude mcp add taylortrader --scope user -- {exe} mcp"
+    assert json.loads(installed["desktop_config"]) == {"mcpServers": {"taylortrader": {"command": str(exe), "args": ["mcp"]}}}
+    checkout = home.mcp_setup(tmp_path / "my checkout")  # a source folder: its home is passed along
+    assert f"-e TAYLORTRADER_HOME='{tmp_path / 'my checkout'}' --" in checkout["claude_code"]
+    assert json.loads(checkout["desktop_config"])["mcpServers"]["taylortrader"]["env"] == {
+        "TAYLORTRADER_HOME": str(tmp_path / "my checkout")}
