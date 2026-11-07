@@ -177,7 +177,7 @@ export interface ConfigDict {
   strategies: StrategyCfg[];
   guardrails: Limits;
   alerts: { ntfy_server: string; email_from: string; email_to: string[]; smtp_host: string; smtp_port: number };
-  service: { loop_seconds: number; heartbeat_stale_minutes: number; daily_summary: boolean; auto_protect: boolean };
+  service: { loop_seconds: number; heartbeat_stale_minutes: number; daily_summary: boolean; no_trades_days: number; auto_protect: boolean };
   ai: AISettings;
 }
 

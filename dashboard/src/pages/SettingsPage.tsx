@@ -214,6 +214,9 @@ function ServiceSection({ store, setup, onSetup }: { store: SettingsStore; setup
         <Labeled label="Warn if quiet for" hint="The watchdog alerts you after this long without a heartbeat" render={(id) => (
           <NumberInput id={id} value={d.heartbeat_stale_minutes} suffix="min" onChange={(heartbeat_stale_minutes) => s.setDraft({ ...d, heartbeat_stale_minutes })} />
         )} />
+        <Labeled label="Tell me if no trades for" hint="For a strategy holding nothing. 0 turns this off" render={(id) => (
+          <NumberInput id={id} value={d.no_trades_days} suffix="days" onChange={(no_trades_days) => s.setDraft({ ...d, no_trades_days })} />
+        )} />
       </div>
       <div className="toggles">
         <Toggle checked={d.auto_protect} onChange={(auto_protect) => s.setDraft({ ...d, auto_protect })}

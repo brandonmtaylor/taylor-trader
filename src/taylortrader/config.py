@@ -49,6 +49,7 @@ class ServiceConfig:
     loop_seconds: int = 30
     heartbeat_stale_minutes: int = 15
     daily_summary: bool = True
+    no_trades_days: int = 14  # note a strategy that holds nothing and hasn't traded this long; 0 turns it off
     auto_protect: bool = True  # re-create a missing stop on a position a strategy owns
 
 
@@ -260,6 +261,8 @@ def _parse_config(raw: dict[str, Any]) -> Config:
         raise ConfigError("[service] loop_seconds must be between 5 and 3600")
     if not 1 <= _number("[service]", "heartbeat_stale_minutes", service.heartbeat_stale_minutes) <= 1440:
         raise ConfigError("[service] heartbeat_stale_minutes must be between 1 and 1440")
+    if not 0 <= _number("[service]", "no_trades_days", service.no_trades_days) <= 365:
+        raise ConfigError("[service] no_trades_days must be between 0 (off) and 365")
 
     return Config(
         mode=mode,

@@ -150,6 +150,23 @@ class Journal:
     def orders_since(self, ts_iso: str) -> list[sqlite3.Row]:
         return list(self.db.execute("SELECT * FROM orders WHERE ts >= ? ORDER BY ts", (ts_iso,)))
 
+    def quiet_since(self, strategy: str) -> tuple[datetime, datetime | None, int]:
+        """For the no-trades note: when the quiet stretch began, the last trade, and how many
+        orders were blocked or failed since it. The stretch restarts at each note, so they don't repeat."""
+        last = self.db.execute("SELECT MAX(ts) FROM orders WHERE strategy=? AND status NOT IN ('blocked','failed')",
+                               (strategy,)).fetchone()[0]
+        tried = self.db.execute("SELECT COUNT(*) FROM orders WHERE strategy=? AND status IN ('blocked','failed') "
+                                "AND ts > ?", (strategy, last or "")).fetchone()[0]
+
+        def mark(kind: str) -> str | None:
+            return self.db.execute("SELECT MAX(ts) FROM events WHERE kind=? AND message=?",
+                                   (kind, strategy)).fetchone()[0]
+
+        if not mark("watching"):  # first look at this strategy: its clock starts now
+            self.event("watching", strategy)
+        begun = max(t for t in (last, mark("watching"), mark("no-trades")) if t)
+        return datetime.fromisoformat(begun), datetime.fromisoformat(last) if last else None, tried
+
     def recent_orders(self, limit: int = 50) -> list[sqlite3.Row]:
         return list(self.db.execute("SELECT * FROM orders ORDER BY id DESC LIMIT ?", (limit,)))
 

@@ -656,3 +656,141 @@ def test_a_paper_order_left_open_isnt_polled_on_the_live_account(svc):
                              broker_order_id="x")
     assert svc.journal.pending_orders("paper") == []
     assert not svc.journal.sold_since("VRT", "2099-01-01", "paper")
+
+
+# --- quiet checks ---------------------------------------------------------------------------------
+
+def _no_prices(s):
+    return [m for t, m, _ in s.rec.sent if t == "No new prices"]
+
+
+def test_frozen_prices_alert_once_a_day_and_new_bars_keep_it_quiet(svc):
+    svc.tick()
+    svc.now = lambda: NOW + timedelta(minutes=59)
+    svc.tick()
+    assert _no_prices(svc) == []
+    svc.now = lambda: NOW + timedelta(minutes=61)  # FakeData's newest bar never changes
+    svc.tick()
+    svc.now = lambda: NOW + timedelta(minutes=90)
+    svc.tick()
+    assert len(_no_prices(svc)) == 2  # push + email, once
+    assert "VRT" in _no_prices(svc)[0] and "Stop-losses" in _no_prices(svc)[0]
+    assert next(e for e in svc.journal.events_since("") if e["kind"] == "no-prices")["level"] == "warning"
+
+
+def test_too_few_bars_counts_as_no_prices(svc):
+    svc.market_data.bars = lambda *a, **k: FakeData().bars("VRT", "5Min", None).iloc[:3]
+    svc.tick()
+    svc.now = lambda: NOW + timedelta(minutes=61)
+    svc.tick()
+    assert _no_prices(svc)
+
+
+def test_slow_timeframes_get_three_bars_before_it_counts(svc):
+    sc = svc.cfg.strategies[0]
+    svc.cfg.strategies[0] = dataclasses.replace(sc, timeframe="1Hour")
+    svc.market_data.bars = lambda *a, **k: FakeData().bars("VRT", "5Min", None).iloc[:3]
+    svc.tick()
+    svc.now = lambda: NOW + timedelta(hours=2)
+    svc.tick()
+    assert _no_prices(svc) == []
+    svc.now = lambda: NOW + timedelta(hours=3, minutes=1)
+    svc.tick()
+    assert _no_prices(svc)
+
+
+def test_daily_strategy_is_fine_all_session_on_its_one_new_bar(svc):
+    sc = svc.cfg.strategies[0]
+    svc.cfg.strategies[0] = dataclasses.replace(sc, timeframe="1Day")
+    days = pd.date_range("2026-01-01", periods=50, freq="B", tz="UTC")
+    svc.market_data.bars = lambda *a, **k: FakeData().bars("VRT", "5Min", None).set_axis(days)
+    svc.tick()
+    svc.now = lambda: NOW + timedelta(hours=5)
+    svc.tick()
+    assert _no_prices(svc) == []
+    tomorrow = NOW + timedelta(days=1)  # same newest bar the next day: that one is frozen
+    svc.now = lambda: tomorrow
+    svc.tick()
+    svc.now = lambda: tomorrow + timedelta(minutes=61)
+    svc.tick()
+    assert _no_prices(svc)
+
+
+CLOSE = datetime(2026, 11, 4, 21, 10, tzinfo=UTC)  # Wed 16:10 New York
+
+
+def _after_close(s, days_quiet):
+    """The market is closed and the strategy's clock began days_quiet days ago."""
+    s.broker.is_open = False
+    s.now = lambda: CLOSE
+    s.journal.event("watching", "test_signal")
+    s.journal.db.execute("UPDATE events SET ts=? WHERE kind='watching'", ((CLOSE - timedelta(days=days_quiet)).isoformat(),))
+
+
+def _order(s, status, days_ago):
+    s.journal.record_order(mode="paper", strategy="test_signal", symbol="VRT", side="buy", status=status)
+    s.journal.db.execute("UPDATE orders SET ts=? WHERE id=(SELECT MAX(id) FROM orders)",
+                         ((CLOSE - timedelta(days=days_ago)).isoformat(),))
+
+
+def _no_trades(s):
+    return [m for t, m, _ in s.rec.sent if t == "No trades: test_signal"]
+
+
+def test_no_trades_note_after_the_set_days_and_only_once(svc):
+    _after_close(svc, 13)
+    svc.tick()
+    assert _no_trades(svc) == []
+    svc.no_trades_date = None
+    _after_close(svc, 14)
+    svc.tick()
+    assert len(_no_trades(svc)) == 2 and "hasn't traded yet" in _no_trades(svc)[0]
+    svc.no_trades_date = None  # a restart, or the next day: the note starts a new stretch
+    svc.alerts._last.clear()
+    svc.journal.db.execute("UPDATE events SET ts=? WHERE kind='no-trades'", (CLOSE.isoformat(),))
+    svc.tick()
+    assert len(_no_trades(svc)) == 2
+
+
+def test_a_recent_trade_resets_it_and_old_ones_are_named(svc):
+    _after_close(svc, 30)
+    _order(svc, "submitted", 3)
+    svc.tick()
+    assert _no_trades(svc) == []
+    svc.no_trades_date = None
+    svc.journal.db.execute("UPDATE orders SET ts=?", ((CLOSE - timedelta(days=20)).isoformat(),))
+    svc.tick()
+    assert "in 20 days" in _no_trades(svc)[0]
+
+
+def test_blocked_orders_are_not_trades_and_the_note_says_so(svc):
+    _after_close(svc, 30)
+    _order(svc, "blocked", 2)
+    _order(svc, "failed", 1)
+    svc.tick()
+    assert "tried 2 times" in _no_trades(svc)[0]
+
+
+def test_no_note_when_holding_paused_turned_off_or_before_the_close(svc):
+    _after_close(svc, 30)
+    svc.broker.positions["VRT"] = Position("VRT", 1, 100, 100)
+    svc.broker.stops.add("VRT")
+    svc.tick()
+    svc.broker.positions.clear()
+    svc.no_trades_date = None
+    (svc.cfg.data_dir / "KILL").write_text("on")
+    svc.tick()
+    (svc.cfg.data_dir / "KILL").unlink()
+    svc.no_trades_date, svc.kill_on = None, False
+    svc.now = lambda: CLOSE - timedelta(hours=2)
+    svc.tick()
+    assert _no_trades(svc) == []
+    svc.now = lambda: CLOSE
+    svc.cfg = dataclasses.replace(svc.cfg, service=ServiceConfig(no_trades_days=0))
+    svc.tick()
+    assert _no_trades(svc) == []
+
+
+def test_no_trades_days_is_checked(tmp_path):
+    with pytest.raises(ConfigError, match="no_trades_days"):
+        parse_config({"service": {"no_trades_days": 400}})

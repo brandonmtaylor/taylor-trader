@@ -95,6 +95,7 @@ timeout_seconds = 120
 loop_seconds = 30
 heartbeat_stale_minutes = 15   # the watchdog alerts if the service is quiet longer than this
 daily_summary = true
+no_trades_days = 14            # tell you if a strategy holds nothing and hasn't traded this long; 0 is off
 auto_protect = true            # re-create a missing stop on positions a strategy owns
 
 # ---------------------------------------------------------------------------

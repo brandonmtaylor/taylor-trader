@@ -107,7 +107,8 @@ const SECTIONS: { id: string; title: string; body: ReactNode }[] = [
     body: (
       <>
         <p>Alerts arrive through the free ntfy app or email: every buy and sell, problems, and a daily summary
-          after the close. Set them up in <a href="#/settings">Settings</a>.</p>
+          after the close. You also hear if prices stop arriving, or if a strategy holding nothing hasn't traded
+          for 14 days. Set them up in <a href="#/settings">Settings</a>.</p>
         <p>To open this dashboard on your phone on the same Wi-Fi, run <code>taylortrader wifi on</code> on the
           Mac. It prints an address and a passcode. Each device signs in once. For access away from home, put
           the Mac and phone on Tailscale.</p>

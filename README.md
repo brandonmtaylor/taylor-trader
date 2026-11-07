@@ -87,6 +87,8 @@ is fine too. The service notices a saved change on its next check and restarts i
 file with a mistake in it is reported and ignored, so the service keeps running on the old settings.
 
 ## What the service does on its own
+- Alerts if prices stop arriving during market hours, and tells you when a strategy holding nothing
+  hasn't traded for 14 days (change it in Settings).
 - Writes a heartbeat every check. A watchdog job (every 10 minutes) alerts if it goes stale, and
   the daily summary after the close is your "still alive" message. Optional `HEALTHCHECK_URL`
   (healthchecks.io) alerts you even if the whole machine is off.

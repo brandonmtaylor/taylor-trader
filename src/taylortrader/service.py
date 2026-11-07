@@ -37,6 +37,7 @@ BAR = {"1Min": timedelta(minutes=1), "5Min": timedelta(minutes=5), "15Min": time
 LOOKBACK = {"1Min": timedelta(days=3), "5Min": timedelta(days=10), "15Min": timedelta(days=20),
             "1Hour": timedelta(days=90), "1Day": timedelta(days=420)}
 MAX_CONSECUTIVE_ERRORS = 5
+NO_PRICES_AFTER = timedelta(hours=1)  # at least this long with no new bar during market hours
 
 
 def kill_file(cfg: Config) -> Path:
@@ -109,6 +110,11 @@ class Service:
                 self.strategy_for[sym] = strat
         self.owner: dict[str, StrategyConfig] = {s: sc for sc in self.cfg.enabled_strategies for s in sc.symbols}
         self.last_bar: dict[tuple[str, str], pd.Timestamp] = {}
+        self.last_new_bar: dict[tuple[str, str], datetime] = {}  # when each one last got a new bar
+        self.session_date = None
+        self.session_start = None
+        self.no_prices_noted: dict[tuple[str, str], object] = {}
+        self.no_trades_date = None
         self.known_positions: dict[str, float] = {}
         self.known_entry: dict[str, float] = {}  # average buy price per symbol, for "made/lost" in alerts
         self.kill_on = False
@@ -179,11 +185,15 @@ class Service:
         self.check_positions(snap)
 
         if not clock.is_open:
+            self._maybe_no_trades_note(snap)
             self._maybe_daily_summary(snap)
             until_open = (clock.next_open - clock.timestamp).total_seconds()
             return max(30.0, min(300.0, until_open))
 
         self._maybe_open_note()
+        today = self.now().astimezone(NY).date()
+        if self.session_date != today:
+            self.session_date, self.session_start = today, self.now() - timedelta(microseconds=1)
         try:
             self.invest.tick(snap)
         except Exception as e:  # the plan failing must not stop the strategies
@@ -208,6 +218,8 @@ class Service:
             self.journal.event("error", msg, "error")
             self.alerts.send("TaylorTrader error", f"{msg}\nOther symbols kept running.", Level.WARNING,
                              key=f"err:{sc.name}:{symbol}:{type(e).__name__}")
+        failed = {(sc.name, symbol) for sc, symbol, _ in failures}  # these already alerted
+        self._check_new_prices([j for j in jobs if (j[0].name, j[1]) not in failed])
         return float(self.cfg.service.loop_seconds)
 
     # --- pieces --------------------------------------------------------------------------------
@@ -399,6 +411,7 @@ class Service:
             return  # no new bar since last decision
         previous = self.last_bar.get(key)
         self.last_bar[key] = bar_ts
+        self.last_new_bar[key] = now
 
         b = Bars(indicators.add_all(df), symbol=symbol)
         i = len(df) - 1
@@ -427,6 +440,56 @@ class Service:
                 # One order per strategy, symbol and bar, even across restarts or a retried request.
                 cid = f"tt-{sc.name}-{symbol}-{int(bar_ts.timestamp())}"
                 self.executor.enter(sc, symbol, price, sig.reason, client_order_id=cid)
+
+    def _check_new_prices(self, jobs: list[tuple[StrategyConfig, str]]) -> None:
+        """Frozen or missing prices look exactly like a quiet market: the heartbeat stays healthy and
+        nothing trades. So say when a symbol gets no new bar for far longer than its timeframe."""
+        now = self.now()
+        today = self.session_date
+        quiet = []
+        for sc, symbol in jobs:
+            key = (sc.name, symbol)
+            seen = self.last_new_bar.get(key, self.session_start)
+            if sc.timeframe == "1Day":  # one new bar per session is all there is
+                late = seen <= self.session_start and now - self.session_start > NO_PRICES_AFTER
+            else:
+                late = now - max(seen, self.session_start) > max(NO_PRICES_AFTER, 3 * BAR[sc.timeframe])
+            if late and self.no_prices_noted.get(key) != today:
+                self.no_prices_noted[key] = today
+                quiet.append(symbol)
+        if quiet:
+            names = ", ".join(sorted(set(quiet)))
+            self.journal.event("no-prices", f"No new prices for {names}", "warning")
+            self.alerts.send("No new prices", f"{names}: no new price data, so the bot can't decide anything "
+                             "for these right now. Stop-losses at Alpaca still work.\n"
+                             "Check the data feed in Settings and the logs.",
+                             Level.WARNING, key=f"no-prices:{today}:{names}", email_copy=True)
+
+    def _maybe_no_trades_note(self, snap) -> None:
+        """A heads-up, not an error: a strategy that hasn't traded for a while, and isn't holding
+        anything, may have nothing to do or may be set so it can never buy."""
+        days = self.cfg.service.no_trades_days
+        now_ny = self.now().astimezone(NY)
+        today = now_ny.date()
+        if (not days or self.kill_on or self.no_trades_date == today or now_ny.weekday() >= 5
+                or (now_ny.hour, now_ny.minute) < (16, 5)):
+            return
+        self.no_trades_date = today
+        for sc in self.cfg.enabled_strategies:
+            if any(s in snap.positions for s in sc.symbols):
+                continue  # holding and waiting is normal
+            since, last_trade, tried = self.journal.quiet_since(sc.name)
+            quiet_days = (self.now() - since).days
+            if quiet_days < days:
+                continue
+            self.journal.event("no-trades", sc.name)
+            if tried:
+                why = f"It tried {tried} times and every order was blocked or failed: see Trades in the dashboard."
+            else:
+                why = "It found nothing to buy. That can be normal, so only look if it surprises you."
+            when = f"in {(self.now() - last_trade).days} days" if last_trade else "yet"
+            self.alerts.send(f"No trades: {sc.name}", f"{sc.name} hasn't traded {when}. {why}",
+                             Level.INFO, key=f"no-trades:{sc.name}", email_copy=True)
 
     def _maybe_daily_summary(self, snap) -> None:
         if not self.cfg.service.daily_summary:
