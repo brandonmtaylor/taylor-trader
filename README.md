@@ -1,34 +1,50 @@
 # TaylorTrader
 
-A trading bot and scheduled long-term investing for [Alpaca](https://alpaca.markets), built
-safety-first. It runs on your own computer, with a local dashboard, phone alerts, and a built-in guide.
+**Your own trading bot, running on your own computer.** Describe a strategy to Claude and it writes the
+rules, tests them and runs them. Let an AI model make the calls, or just invest on a schedule. Every
+trade the bot opens carries a stop-loss held at your broker, [Alpaca](https://alpaca.markets).
 
 ![The TaylorTrader dashboard: account value, the bot's heartbeat, and growth of $100 against SPY](https://raw.githubusercontent.com/brandonmtaylor/taylor-trader/main/docs/images/overview.png)
 
-> **Not financial advice.** TaylorTrader is software you run on your own account, with your own keys.
-> It trades on **paper** (simulated money) unless you turn live trading on yourself. Trading can lose
-> money, and you're responsible for every order it places. It's provided as is, with no warranty
-> (see the [license](https://github.com/brandonmtaylor/taylor-trader/blob/main/LICENSE.md)).
+- **Talk to it from Claude.** Describe an idea in plain English and Claude turns it into rules,
+  backtests them against buying and holding, and adds the strategy when you say so. Ask how it's
+  doing, pause it, or move a stock to another strategy, all in conversation.
+- **An AI strategy that shows its work.** A language model decides buy, sell or hold, and explains
+  every call with its confidence, pros and cons. A report card grades each call against what happened next.
+- **Strategies without code.** Pick a built-in, or write rules like `close > ma_50 and rsi < 40`, and
+  backtest them in a click.
+- **Scheduled investing.** Put a set amount into a mix of funds every week or month, kept in balance,
+  and see first how that plan would have done over the last 10 years.
+- **On your phone.** Open the dashboard from your phone on your Wi-Fi, and get alerts for every buy,
+  sell and problem.
+- **Safety first.** Stop-losses held at Alpaca, limits on every order, and paper trading until you
+  choose otherwise.
+
+> **Not financial advice.** It trades on **paper** (simulated money) until you switch to live yourself.
+> Trading can lose money, and you're responsible for every order it places. Provided as is, with no
+> warranty (see the [license](https://github.com/brandonmtaylor/taylor-trader/blob/main/LICENSE.md)).
 
 **Status:** early, and in a paper-trading trial.
 
-## What it does
+## A quick tour
 
-**Trades on rules you can read.** Pick a built-in strategy, write your own in plain rules
-(`close > ma_50 and rsi < 40`), or let a language model decide. Every buy carries a stop-loss held at
-Alpaca, and every order passes the same safety limits. The chart shows each buy and sell, and how much
-of the move each sell kept.
+**Ask Claude.** With the MCP server connected, for example:
+```text
+You:    Add a strategy for NVDA and AMD: buy when they pull back to the 50-day average with RSI
+        under 40, sell when RSI goes over 70.
+Claude: Writes the rules, backtests them on both stocks against buying and holding, shows you
+        the results, and adds the strategy once you say so.
+```
+
+**Every trade on the chart.** Each buy and sell, the stop-loss, and how much of the move each sell kept.
 
 ![A stock's price with the bot's buys, sells, stop-loss and entry, and how each sell was timed](https://raw.githubusercontent.com/brandonmtaylor/taylor-trader/main/docs/images/trade-chart.png)
 
-**Shows its reasoning.** The AI strategy (experimental) explains every call, with its confidence, pros
-and cons. A report card grades each call against what the price did next.
+**The AI's reasoning, call by call.**
 
 ![AI decisions: each call with its confidence and a one-line reason](https://raw.githubusercontent.com/brandonmtaylor/taylor-trader/main/docs/images/ai-decisions.png)
 
-**Invests on a schedule.** If you'd rather not trade, an invest plan puts a set amount into a fixed mix
-of funds every week or month and keeps it balanced. A "what if" table runs your plan on real past
-prices first.
+**What if you'd started 10 years ago?** Your investing plan, run on real past prices for each mix.
 
 ![What if you'd started 10 years ago: $200 a month in each ready-made mix, run on real past prices](https://raw.githubusercontent.com/brandonmtaylor/taylor-trader/main/docs/images/what-if.png)
 
@@ -42,24 +58,6 @@ prices first.
 <td>Open it from your phone on the same Wi-Fi, with a passcode.</td>
 </tr>
 </table>
-
-## Safety limits
-- **Stop-losses live at the broker.** Every strategy buy is a bracket order with a stop-loss held by
-  Alpaca, so the stop still works if TaylorTrader or your computer stops. A stop limits losses but can
-  fill below its price when a stock gaps down or moves fast. (The invest plan doesn't use stops: holding
-  through dips is its point.)
-- **Every order is checked** against position size, total exposure, daily loss, buys per day, stop
-  width, and a pause switch. Settings can tighten the built-in hard limits but never loosen them.
-  Sells are never blocked.
-- **It only manages what it bought.** Shares you already owned aren't touched, even if you add the
-  symbol to a strategy.
-- **Keys stay secret.** They live in the macOS Keychain (or a private `.env` file elsewhere), are
-  masked in logs, and the dashboard never shows them again. Config files with secret-looking values
-  are rejected.
-- **Real money needs two steps:** live keys that open an active account, and typing `GO LIVE` in the
-  dashboard on your Mac.
-- **It tells you when something's wrong:** a missing stop, a refused order, prices that stopped
-  arriving, a strategy that hasn't traded in two weeks, or the bot itself going quiet.
 
 ## Install
 **Platforms:** macOS is fully supported. Linux runs the dashboard, backtests and a foreground
@@ -95,19 +93,17 @@ real-money buying back on after a pause only work on the Mac itself. It's plain 
 home network you trust; for anywhere else, put the Mac and phone on [Tailscale](https://tailscale.com).
 `wifi off` closes it again.
 
-## Strategies
-Built-ins: `macd_rsi`, `macd`, `ma_20`, `rsi_14`, `ma_20_rsi`, `ma_200_rsi`, `ma_20_over_200_rsi`,
-`chaikin`, `pullback`. Each symbol belongs to one strategy, so
-it's always clear who manages a position.
-
-Or write your own with `rule`: a buy rule and a sell rule, like `close > ma_50 and rsi < 40` or
-`close > prev_high_20`. Rules can use price, volume, MACD and Chaikin, plus these at any length up to
-250 bars: `ma_N`, `ema_N`, `high_N`, `low_N`, `change_N` (percent), `avg_volume_N`, `rsi_N`, `atr_N`.
-Rules are parsed, never run as code.
-
-**Test an idea before trusting it.** The backtester always compares against buying and holding.
-`taylortrader search` goes further: it tunes on older data, then tests once on held-back data, and
-checks the result against random entries, so luck doesn't pass for skill.
+## Talk to it from Claude (MCP)
+TaylorTrader includes an MCP server, so Claude Code or the Claude desktop app can check on the bot and
+adjust it: "how did the AI strategy do this week?", "move PLTR to macd_rsi", "backtest rsi_14 on NVDA
+hourly", or describe an idea and let Claude write the rules and test it.
+```bash
+claude mcp add taylortrader --scope user -- taylortrader mcp
+```
+It uses the same rules as the dashboard: every change is checked, hard limits still apply, and changes
+are logged as coming from Claude. It can't go live, read or change keys, loosen limits on a live
+account, or turn buying back on after you pause it. Selling on a live account is off unless you turn
+on **Let Claude sell on a live account** in Settings, on your Mac.
 
 ## AI strategy (experimental)
 `ai` asks a language model whether to buy, sell or hold, using your plain-English instructions, recent
@@ -125,6 +121,20 @@ It can't be backtested honestly, so the backtester refuses it: try it in dry run
 `taylortrader replay` tests it on past bars with each stock disguised, so the model can't recall what
 happened next.
 
+## Strategies
+Built-ins: `macd_rsi`, `macd`, `ma_20`, `rsi_14`, `ma_20_rsi`, `ma_200_rsi`, `ma_20_over_200_rsi`,
+`chaikin`, `pullback`. Each symbol belongs to one strategy, so
+it's always clear who manages a position.
+
+Or write your own with `rule`: a buy rule and a sell rule, like `close > ma_50 and rsi < 40` or
+`close > prev_high_20`. Rules can use price, volume, MACD and Chaikin, plus these at any length up to
+250 bars: `ma_N`, `ema_N`, `high_N`, `low_N`, `change_N` (percent), `avg_volume_N`, `rsi_N`, `atr_N`.
+Rules are parsed, never run as code.
+
+**Test an idea before trusting it.** The backtester always compares against buying and holding.
+`taylortrader search` goes further: it tunes on older data, then tests once on held-back data, and
+checks the result against random entries, so luck doesn't pass for skill.
+
 ## Long-term investing
 An **invest plan** puts a set amount into a fixed mix of funds on a schedule (say $200 a month into US
 stocks, international stocks and bonds) and holds it.
@@ -139,17 +149,23 @@ stocks, international stocks and bonds) and holds it.
 The ready-made mixes are examples, not recommendations. What's built and what's planned is in the
 [investing proposal](https://github.com/brandonmtaylor/taylor-trader/blob/main/docs/proposals/investing.md).
 
-## Talk to it from Claude (MCP)
-TaylorTrader includes an MCP server, so Claude Code or the Claude desktop app can check on the bot and
-adjust it: "how did the AI strategy do this week?", "move PLTR to macd_rsi", "backtest rsi_14 on NVDA
-hourly", or describe an idea and let Claude write the rules and test it.
-```bash
-claude mcp add taylortrader --scope user -- taylortrader mcp
-```
-It uses the same rules as the dashboard: every change is checked, hard limits still apply, and changes
-are logged as coming from Claude. It can't go live, read or change keys, loosen limits on a live
-account, or turn buying back on after you pause it. Selling on a live account is off unless you turn
-on **Let Claude sell on a live account** in Settings, on your Mac.
+## Safety limits
+- **Stop-losses live at the broker.** Every strategy buy is a bracket order with a stop-loss held by
+  Alpaca, so the stop still works if TaylorTrader or your computer stops. A stop limits losses but can
+  fill below its price when a stock gaps down or moves fast. (The invest plan doesn't use stops: holding
+  through dips is its point.)
+- **Every order is checked** against position size, total exposure, daily loss, buys per day, stop
+  width, and a pause switch. Settings can tighten the built-in hard limits but never loosen them.
+  Sells are never blocked.
+- **It only manages what it bought.** Shares you already owned aren't touched, even if you add the
+  symbol to a strategy.
+- **Keys stay secret.** They live in the macOS Keychain (or a private `.env` file elsewhere), are
+  masked in logs, and the dashboard never shows them again. Config files with secret-looking values
+  are rejected.
+- **Real money needs two steps:** live keys that open an active account, and typing `GO LIVE` in the
+  dashboard on your Mac.
+- **It tells you when something's wrong:** a missing stop, a refused order, prices that stopped
+  arriving, a strategy that hasn't traded in two weeks, or the bot itself going quiet.
 
 ## Command line
 Everything the dashboard does also works from a terminal:
