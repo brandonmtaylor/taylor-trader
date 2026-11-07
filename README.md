@@ -37,8 +37,9 @@ Claude: Writes the rules, backtests them on both stocks against buying and holdi
 ```
 
 **Every trade on the chart.** Each buy and sell, the stop-loss, and how much of the move each sell kept.
+Hover for any bar's price, and add moving averages, RSI and MACD.
 
-![A stock's price with the bot's buys, sells, stop-loss and entry, and how each sell was timed](https://raw.githubusercontent.com/brandonmtaylor/taylor-trader/main/docs/images/trade-chart.png)
+![The trade chart: hovering shows each bar's price; the 20-bar average, RSI and MACD are switched on, then the range changes to 3 months](https://raw.githubusercontent.com/brandonmtaylor/taylor-trader/main/docs/images/trade-chart.gif)
 
 **The AI's reasoning, call by call.**
 
