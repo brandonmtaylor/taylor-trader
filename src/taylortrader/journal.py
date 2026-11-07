@@ -125,6 +125,17 @@ class Journal:
         )
         return cur.lastrowid
 
+    def has_order(self, broker_order_id: str) -> bool:
+        return self.db.execute("SELECT 1 FROM orders WHERE broker_order_id=?", (broker_order_id,)).fetchone() is not None
+
+    def bot_holds(self, symbol: str, mode: str) -> bool:
+        """Whether a position in symbol is the bot's: its last order there (strategies, not the
+        invest plan) is a buy. Shares you bought yourself before adding the symbol to a strategy aren't."""
+        row = self.db.execute("SELECT side FROM orders WHERE symbol=? AND mode=? AND strategy != 'invest' "
+                              "AND status IN ('submitted','filled') ORDER BY ts DESC, id DESC LIMIT 1",
+                              (symbol, mode)).fetchone()
+        return bool(row) and row["side"] == "buy"
+
     def sold_since(self, symbol: str, cutoff_iso: str, mode: str | None = None) -> bool:
         """Did the bot (or the dashboard) sell this symbol recently? Recent means placed since the
         cutoff, still waiting, or filled since the cutoff (a sell sent after hours fills at the open).
@@ -252,7 +263,8 @@ class Journal:
             " acted, model, input_tokens, output_tokens, latency_ms, error, features)"
             " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (now_iso(), strategy, symbol, question, action, confidence, summary, json.dumps(pros or []),
-             json.dumps(cons or []), int(acted), model, input_tokens, output_tokens, latency_ms, error,
+             json.dumps(cons or []), int(acted), model, input_tokens, output_tokens, latency_ms,
+             redact(error) if error else None,
              json.dumps(features) if features else None),
         )
 

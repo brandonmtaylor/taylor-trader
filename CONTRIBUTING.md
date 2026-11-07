@@ -8,15 +8,18 @@ the approach before you spend time on it.
 ```sh
 uv sync
 git config core.hooksPath scripts/githooks   # scans each commit for secrets
-uv run pytest
+uv run pytest -q
 uv run ruff check src tests
 ```
+
+The hooks setting turns on the pre-commit secret scan, which catches keys before they get into a commit. Run the
+tests and the linter before you open a pull request; CI runs both.
 
 The dashboard is in `dashboard/` (`npm install`, then `npm run build`).
 
 ## Ground rules
 
-- Safety first: every buy has a stop-loss held at the broker, and nothing goes around the guardrails.
+- Safety first: every strategy buy has a stop-loss held at the broker, and nothing goes around the guardrails.
 - Never commit keys, account numbers or real trading records.
 - New behavior comes with tests. Anything that claims a strategy works needs the holdout and luck test.
 - Use your own paper account, never live, while developing.

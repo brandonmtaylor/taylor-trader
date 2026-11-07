@@ -19,17 +19,17 @@ It trades on paper unless you explicitly turn live trading on.
 
 | Area | Decision |
 |---|---|
-| Language | Python 3.13 engine; TypeScript only for the dashboard UI |
+| Language | Python 3.12+ engine; TypeScript only for the dashboard UI |
 | Broker | Alpaca via `alpaca-py` (pinned), behind a broker adapter |
 | Market data | Live: Yahoo Finance (all exchanges, current; unofficial) with automatic fallback to Alpaca IEX. Backtests: Alpaca SIP history. Cached locally |
 | Timeframe | Compare 5-minute vs hourly/daily in backtests before choosing |
 | Autonomy | Fully autonomous, bounded by the guardrails engine |
-| Runs on | Mac mini, launchd service (no cron + sleep) |
+| Runs on | macOS (launchd), as a long-running service (no cron + sleep) |
 | Dashboard | Local FastAPI + Vite/React/TS, served on localhost only |
 | Alerts | ntfy for live alerts, email for the daily summary |
 | Secrets | Env vars / macOS Keychain; nothing secret in the repo |
-| License | FSL-1.1-ALv2 (free to use, change and learn from; no competing commercial copies; each version becomes Apache-2.0 after two years). Chosen 2026-11-06 over Apache (anyone could sell a clone) and AGPL (protects hosting, which regulation makes impractical anyway). Decide any change before outside contributions arrive |
-| Audience | Built for me, open-source-ready from day one |
+| License | FSL-1.1-ALv2 (free to use, change and learn from; no competing commercial copies; each version becomes Apache-2.0 after two years). Chosen 2026-11-06 over Apache (anyone could sell a clone) and AGPL (protects hosting, which regulation makes impractical anyway). |
+| Audience | Source-available from day one |
 
 ## Features carried over from the original bot
 
@@ -53,7 +53,7 @@ It trades on paper unless you explicitly turn live trading on.
 | Account ended up ~97% in one stock | Guardrails: max position size, daily loss cap, max trades/day, kill switch |
 | A position stayed open with nothing managing it | Unmanaged-position alert |
 | Keys and phone number in a tracked ini file | Env vars / Keychain, `.env.example` only |
-| yfinance (unofficial, 60-day cap on 5-minute data) | Alpaca market data, cached |
+| yfinance only (unofficial, 60-day cap on 5-minute data) | Live: Yahoo by default with automatic fallback to Alpaca IEX. Backtests: Alpaca history. Cached |
 | Cron + sleep-until-open, 2 GB of cron mail | Long-running launchd service with structured logs |
 
 ## Architecture
@@ -74,14 +74,14 @@ Engine = strategies + scanner + guardrails + broker adapter + journal + data cac
 - Broker adapter (paper by default), bracket orders on every entry
 - Guardrails engine with hard minimums that config can tighten but not loosen
 - launchd service, trade-update stream, heartbeat, ntfy and email alerts
-- Data layer on Alpaca data with a local cache
+- Data layer with a local cache (Yahoo for live, Alpaca for backtests)
 - Port MACD_RSI behind the strategy interface; confirm it matches the old bot's decisions
 - Small backtest harness: 5-minute vs hourly, always against buy-and-hold
 - Journal (import old trades); config and secrets done properly
 - Read-only dashboard: status, positions with their stops, journal, equity vs buy-and-hold
 
 **Done when** it has run 2 to 4 weeks on paper with no unexplained gaps, every position has a broker-side
-stop, alerts reach my phone, and paper results roughly match the backtest for the same period.
+stop, alerts arrive reliably, and paper results roughly match the backtest for the same period.
 
 ### M2: Dashboard controls and rotation
 - Settings, paper/live switch (typed confirmation), kill switch, backtest runner
@@ -101,7 +101,8 @@ stop, alerts reach my phone, and paper results roughly match the backtest for th
 
 ### What the tests found (2026-11-05/06)
 The honest tools (replay, search with a holdout, the luck test) were pointed at the strategies
-before any real money. Recorded here so the reasoning survives; numbers are in `var/search/`.
+before any real money. Recorded here so the reasoning survives. The numbers are in local files
+under `var/search/`, which are not published.
 - **AI strategy** (Claude Sonnet via Claude Code, price data only, disguised): about 500 replayed
   decisions over 180 days. As configured it never bought. With looser wording it bought 18 times, all
   under the confidence needed to trade, and those picks did worse than the cheap rule alone.
@@ -122,8 +123,8 @@ before any real money. Recorded here so the reasoning survives; numbers are in `
   market. MACD looks like a risk reducer (smaller drops, less growth). Strategies stay first-class:
   easy to change, a no-code `rule` strategy for writing new ones, and the search to test them,
   because the point is that anyone can try ideas and the tools will tell them honestly.
-- The holdouts above have each been looked at (logged in `var/search/holdout-looks.jsonl`). Retesting
-  new ideas should use new lists or new months, not the same holdout again.
+- The holdouts above have each been looked at (logged in `var/search/holdout-looks.jsonl`, a local
+  file that is not published). Retesting new ideas should use new lists or new months, not the same holdout again.
 - Private work (e.g. an ML filter on top of a rule) can plug in as its own package that registers a
   strategy; the bar it has to clear is the same: the holdout and the luck test.
 
@@ -131,10 +132,10 @@ before any real money. Recorded here so the reasoning survives; numbers are in `
 For people who want a diversified portfolio built up over time, not trading: the same safety and
 dashboard, with no strategies, signals or stop-losses involved.
 - An **invest plan**: target weights (e.g. a few broad ETFs), and how to get there: invest $X every
-  week/month until a total or end date (dollar-cost averaging), or all at once
+  week/month until an end date (dollar-cost averaging), or all at once
 - Fractional shares (Alpaca notional orders), so small amounts still match the weights
-- **Rebalancing**: buy what's under its weight with new money first; sell only when something drifts
-  past a band (e.g. 5 points), checked monthly or quarterly. Fewer sells, fewer taxable events
+- **Rebalancing**: new money goes to what's furthest under its weight first (built). Selling when
+  something drifts past a band (e.g. 5 points) is proposed, not built. Fewer sells, fewer taxable events
 - Example portfolios to start from (labeled examples, not advice); the user picks and edits weights
 - Guardrails need an investing profile: no stop-loss on plan holdings (a stop fights buy-and-hold),
   scheduled buys not blocked by the daily loss limit (buying dips is the point), kill switch and
@@ -143,15 +144,14 @@ dashboard, with no strategies, signals or stop-losses involved.
   is a share of the trading slice only
 - Dashboard: progress toward the target, current vs. target weights, contributions vs. growth, and
   next scheduled buy. The bot can't pull money from a bank; it invests cash already in the account
-- Broader audience for the open-source release; the blog can show both modes
+- Broadens the audience for the public release
 
-### M4: MCP server and open-source release
+### M4: MCP server and public release
 - ✅ Local MCP server (`taylortrader mcp`, stdio): status, account, results, orders, log, AI decisions,
   strategies, backtests; change strategies and limits; pause; dry run/paper; sell with exact
   confirmation. Never: go live, keys, or loosen limits on live. Same validation as the dashboard,
   journaled as from Claude
-- Public repo, README, demo, docs; blog series links to it
-- Before going public: check the product name (domain, GitHub, a basic trademark search)
+- Public repo, README, demo, docs
 
 ## Later
 

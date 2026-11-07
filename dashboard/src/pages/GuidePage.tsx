@@ -27,8 +27,8 @@ const SECTIONS: { id: string; title: string; body: ReactNode }[] = [
       <ol>
         <li><b>Get Alpaca paper keys.</b> Sign up free at alpaca.markets (email only for paper), switch to the
           Paper account, and generate API keys on the home page.</li>
-        <li><b>Paste them into <a href="#/setup">Setup</a>.</b> They're tested, then stored in the macOS Keychain.
-          They're never shown again or written to a project file.</li>
+        <li><b>Paste them into <a href="#/setup">Setup</a>.</b> They're tested, then stored in the Keychain on macOS,
+          or a private .env file elsewhere. They're never shown again.</li>
         <li><b>Pick a strategy</b> and run a backtest, or set up an invest plan instead.</li>
         <li><b>Check the safety limits</b> and, if you like, add phone or email alerts.</li>
         <li><b>Start it in dry run.</b> Watch what it would do for a few days, then switch to paper orders.</li>
@@ -43,7 +43,8 @@ const SECTIONS: { id: string; title: string; body: ReactNode }[] = [
         <dt>Dry run</dt>
         <dd>Makes every decision and alerts you about it, but orders nothing. Use it to see how a strategy behaves.</dd>
         <dt>Paper</dt>
-        <dd>Real orders in Alpaca's practice account, with pretend money. Fills are simulated but realistic.</dd>
+        <dd>Real orders in Alpaca's practice account, with pretend money. Fills are simulated and usually better than real
+          ones, because there's no slippage and no partial fills.</dd>
         <dt>Live</dt>
         <dd>Real money. It needs separate live keys, an active live account, and typing GO LIVE. Switching
           is only possible on the Mac itself, never from your phone. Give paper a few weeks first.</dd>
@@ -52,10 +53,12 @@ const SECTIONS: { id: string; title: string; body: ReactNode }[] = [
   },
   {
     id: "safety",
-    title: "How it keeps you safe",
+    title: "Safety limits",
     body: (
       <ul>
-        <li><b>Every buy has a stop-loss</b>, placed at Alpaca, so it works even if this computer is off.</li>
+        <li><b>Every strategy buy has a stop-loss</b> (the invest plan doesn't use them), placed at Alpaca, so it
+          works even if this computer is off. A stop limits losses, but it can fill below its price when a stock
+          gaps down or moves fast.</li>
         <li><b>Daily loss limit</b> (3% by default): after the account falls that much in a day, no new buys
           until tomorrow. Sells and stop-losses keep working. This is why you may see "blocked" buys on a bad day.
           Deposits and withdrawals don't count as gains or losses.</li>
@@ -121,7 +124,10 @@ const SECTIONS: { id: string; title: string; body: ReactNode }[] = [
     body: (
       <p>TaylorTrader includes an MCP server, so Claude can check on it and adjust it for you: "how did the bot
         do this week?", "pause new buys". It follows the same rules as this dashboard, and it can't go live or see
-        your keys. The README has the one-line setup.</p>
+        your keys. To connect it, run{" "}
+        <code>claude mcp add taylortrader --scope user -- taylortrader mcp</code>. A setting in{" "}
+        <a href="#/settings">Settings</a> (Mac only) controls whether Claude may sell on a live account. It's off
+        by default.</p>
     ),
   },
   {
@@ -137,10 +143,20 @@ const SECTIONS: { id: string; title: string; body: ReactNode }[] = [
           invest-plan day is bought on the next run.</dd>
         <dt>Where are my settings and data?</dt>
         <dd>Settings in <code>config.toml</code>, trades in a journal file, both in the TaylorTrader folder
-          (~/Library/Application Support/TaylorTrader when installed). Keys are in the Keychain.</dd>
+          (~/Library/Application Support/TaylorTrader when installed). Keys are in the Keychain on macOS, or a private
+          .env file elsewhere.</dd>
         <dt>How do I update or uninstall?</dt>
-        <dd><code>uv tool upgrade taylortrader</code> updates it. <code>taylortrader dashboard --stop</code>, then
-          stopping the bot in Settings, then <code>uv tool uninstall taylortrader</code> removes it.</dd>
+        <dd>
+          <p><code>uv tool upgrade taylortrader</code> updates it. To remove it completely:</p>
+          <ol>
+            <li>Stop the bot in <a href="#/settings">Settings</a>.</li>
+            <li>Run <code>taylortrader dashboard --stop</code>.</li>
+            <li>Run <code>uv tool uninstall taylortrader</code>.</li>
+            <li>Delete <code>~/Library/LaunchAgents/com.taylortrader.*.plist</code>.</li>
+            <li>Delete the data folder, <code>~/Library/Application Support/TaylorTrader</code>.</li>
+            <li>In the Keychain Access app, delete the items under the service "taylortrader".</li>
+          </ol>
+        </dd>
       </dl>
     ),
   },
@@ -152,7 +168,7 @@ export function GuidePage() {
       <header className="page__head">
         <div>
           <h1>Guide</h1>
-          <p className="page__sub">How TaylorTrader works, what keeps your money safe, and what to expect.</p>
+          <p className="page__sub">How TaylorTrader works, what limits your risk, and what to expect.</p>
         </div>
       </header>
       <nav className="guide__toc" aria-label="On this page">

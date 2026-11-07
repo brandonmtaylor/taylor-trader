@@ -173,3 +173,22 @@ def test_an_idea_gets_the_honest_test(server, monkeypatch):
 def test_an_idea_it_cant_read_is_refused(server):
     with pytest.raises(RuntimeError, match="unknown name"):
         call(server, "test_strategy_idea", buy_when="earnings > 0")
+
+
+def test_selling_on_live_is_the_users_switch(server):
+    c = go_live(server)
+    for tool, args in (("sell_position", {"symbol": "AAPL", "confirm": "AAPL"}),
+                       ("sell_everything", {"confirm": "SELL ALL"})):
+        with pytest.raises(RuntimeError, match="Settings on their Mac"):
+            call(server, tool, **args)
+    assert c.broker.closes == []
+    with pytest.raises(RuntimeError, match="dashboard"):
+        call(server, "pause_new_buys", paused=False)  # resuming real-money buying isn't Claude's to do
+    with pytest.raises(RuntimeError, match="dashboard"):
+        call(server, "set_mode", mode="paper")  # nor is leaving live (which would reopen the limits)
+    cfg = load_config(c.path)
+    save_config(dataclasses.replace(cfg, mcp=dataclasses.replace(cfg.mcp, allow_live_selling=True)), c.path)
+    c.rt.reload()
+    call(server, "sell_position", symbol="AAPL", confirm="AAPL")
+    assert c.broker.closes == ["AAPL"]
+    call(server, "pause_new_buys", paused=True)  # pausing always works

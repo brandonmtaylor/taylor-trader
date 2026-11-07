@@ -4,11 +4,11 @@ from types import SimpleNamespace
 import numpy as np
 import pandas as pd
 import pytest
-from alpaca.trading.enums import OrderSide
+from alpaca.trading.enums import OrderSide, OrderType
 
-from guardrails import OrderIntent, Side
 from taylortrader import backtest, indicators
 from taylortrader.broker import AlpacaBroker, BrokerError
+from taylortrader.guardrails import OrderIntent, Side
 from taylortrader.strategies import Bars, Signal, Strategy, get_strategy, list_strategies
 
 
@@ -208,3 +208,30 @@ def test_trades_today_counts_only_strategy_buys():
     b._client.orders = [_order("tt-x-Y-1")] * 500
     assert b.trades_today() == 500  # a full page can't be counted: assume the limit is hit
 
+
+def test_a_refused_sell_puts_the_stop_back():
+    class Client:
+        def __init__(self):
+            self.cancelled, self.submitted = [], []
+
+        def get_orders(self, req):
+            stop = SimpleNamespace(id="s1", symbol="VRT", status="new", side=OrderSide.SELL, order_type=OrderType.STOP,
+                                   stop_price="158.62", qty="3", legs=None)
+            return [] if self.cancelled else [stop]
+
+        def cancel_order_by_id(self, oid):
+            self.cancelled.append(oid)
+
+        def close_position(self, symbol):
+            raise RuntimeError("trade denied due to pattern day trading protection")
+
+        def submit_order(self, req):
+            self.submitted.append(req)
+
+    b = AlpacaBroker.__new__(AlpacaBroker)
+    b.paper, b._client = True, Client()
+    with pytest.raises(RuntimeError, match="pattern day"):
+        b.close_position("VRT")
+    assert b._client.cancelled == ["s1"]
+    req = b._client.submitted[0]
+    assert req.symbol == "VRT" and float(req.qty) == 3 and float(req.stop_price) == 158.62

@@ -67,7 +67,11 @@ def test_live_requires_explicit_confirmation(fake_env, monkeypatch):
     monkeypatch.setenv("ALPACA_LIVE_SECRET_KEY", FAKE_SECRET)
     with pytest.raises(secrets.SecretsError, match="TAYLORTRADER_ALLOW_LIVE"):
         secrets.load_alpaca_credentials("live")
-    monkeypatch.setenv(secrets.LIVE_CONFIRM_VAR, "yes")
+    for wrong in ("yes", "0", "false", ""):  # only the exact value the dashboard writes unlocks it
+        monkeypatch.setenv(secrets.LIVE_CONFIRM_VAR, wrong)
+        with pytest.raises(secrets.SecretsError, match="TAYLORTRADER_ALLOW_LIVE"):
+            secrets.load_alpaca_credentials("live")
+    monkeypatch.setenv(secrets.LIVE_CONFIRM_VAR, "1")
     assert secrets.load_alpaca_credentials("live").paper is False
 
 
@@ -179,3 +183,25 @@ def test_alert_settings_are_validated(alerts, msg):
 
     with pytest.raises(ConfigError, match=msg):
         parse_config({"alerts": alerts})
+
+
+def test_safe_defaults_and_trading_feeds():
+    from taylortrader.config import ConfigError, parse_config
+
+    cfg = parse_config({})
+    assert cfg.dry_run is True and cfg.feed == "yahoo" and cfg.mcp.allow_live_selling is False
+    for bad in ({"feed": "sip"}, {"ai": {"endpoint": "http://example.com/v1"}},
+                {"alerts": {"ntfy_server": "http://ntfy.example.org"}},
+                {"strategies": [{"name": "macd_rsi", "symbols": ["A/../../X"]}]}):
+        with pytest.raises(ConfigError):
+            parse_config(bad)
+    assert parse_config({"ai": {"endpoint": "http://localhost:11434/v1"}}).ai.endpoint.startswith("http://localhost")
+
+
+def test_pinned_github_actions_arent_secrets():
+    from taylortrader.secretscan import scan_text
+
+    sha = "11d5960a" + "0b2e3f4a5c6d7e8f9a0b1c2d3e4f5a6b"
+    assert scan_text(f"      - uses: actions/checkout@{sha} # v4.4.0\n") == []
+    assert scan_text(f"token: {'A' * 8}{sha}\n") or scan_text(f"secret = \"{'Zz9' * 13}x\"\n")
+

@@ -27,6 +27,8 @@ PATTERNS = {
 SKIP_SUFFIXES = {".png", ".jpg", ".jpeg", ".gif", ".ico", ".parquet", ".pdf"}
 SKIP_FILES = {"LICENSE"}
 ALLOW_MARKER = "secretscan: allow"
+# A GitHub Action pinned to a commit (uses: owner/repo@<40 hex>): the hash looks like an Alpaca secret.
+PINNED_ACTION = re.compile(r"^\s*(-\s*)?uses:\s*[\w.-]+/[\w./-]+@[0-9a-f]{40}(\s+#.*)?$")
 # The allow marker can silence generic patterns, never these.
 NEVER_ALLOWED = {"Alpaca key ID", "private key", "API key", "known credential value"}
 KNOWN_SECRET_NAMES = (
@@ -66,10 +68,11 @@ def scan_text(text: str, known: set[str] | frozenset[str] = frozenset()) -> list
         allowed = ALLOW_MARKER in line
         if any(value in line for value in known):
             hits.append((lineno, "known credential value"))
+        checked = line.rsplit("@", 1)[0] if PINNED_ACTION.match(line) else line
         for label, pattern in PATTERNS.items():
             if allowed and label not in NEVER_ALLOWED:
                 continue
-            if pattern.search(line):
+            if pattern.search(checked):
                 hits.append((lineno, label))
     return hits
 

@@ -1,6 +1,6 @@
 import pytest
 
-from guardrails import (
+from taylortrader.guardrails import (
     AccountSnapshot,
     Guardrails,
     Limits,

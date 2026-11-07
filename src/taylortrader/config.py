@@ -10,10 +10,13 @@ from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
-from guardrails import Limits
+from taylortrader.guardrails import Limits
 
 TIMEFRAMES = ("1Min", "5Min", "15Min", "1Hour", "1Day")
-FEEDS = ("yahoo", "iex", "sip")
+FEEDS = ("yahoo", "iex")  # for trading. SIP is backtests only: the free plan holds back the newest 15 minutes
+# Local addresses are the only place an API key or topic may go over plain http.
+_LOCAL_HTTP = r"http://(localhost|127\.0\.0\.1|\[::1\])(:\d+)?(/[^\s]*)?"
+_ADDRESS = re.compile(rf"^(https://[^\s]+|{_LOCAL_HTTP})$")
 # Setting names that look like they hold a secret value ("api_key", "secret_key", "ntfy_topic",
 # "password", "healthcheck_url"). Those belong in the environment, .env or the Keychain.
 _SECRET_NAME = re.compile(r"(?i)(secret|password|passwd|token|(^|_)key$|(^|_)key_id$|api_key|topic$|url$)")
@@ -33,6 +36,13 @@ class StrategyConfig:
     take_profit_pct: float = 0.0
     enabled: bool = True
     params: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class MCPConfig:
+    # Claude (through the MCP server) may sell on a live account. Off: it can only sell on paper.
+    # Changed only on this Mac, never by Claude or from a phone.
+    allow_live_selling: bool = False
 
 
 @dataclass(frozen=True)
@@ -94,15 +104,16 @@ class InvestConfig:
 @dataclass(frozen=True)
 class Config:
     mode: str = "paper"
-    dry_run: bool = False  # decide and alert, but place no orders
+    dry_run: bool = True  # decide and alert, but place no orders. On unless a config says otherwise
     data_dir: Path = Path("var")
-    feed: str = "iex"
+    feed: str = "yahoo"
     strategies: list[StrategyConfig] = field(default_factory=list)
     limits: Limits = field(default_factory=Limits)
     alerts: AlertsConfig = field(default_factory=AlertsConfig)
     service: ServiceConfig = field(default_factory=ServiceConfig)
     ai: AIConfig = field(default_factory=AIConfig)
     invest: InvestConfig = field(default_factory=InvestConfig)
+    mcp: MCPConfig = field(default_factory=MCPConfig)
 
     @property
     def enabled_strategies(self) -> list[StrategyConfig]:
@@ -131,7 +142,7 @@ def load_config(path: Path | str = "config.toml") -> Config:
     return parse_config(raw)
 
 
-_SYMBOL = re.compile(r"^[A-Z][A-Z0-9.\-/]{0,14}$")
+_SYMBOL = re.compile(r"^[A-Z][A-Z0-9.\-]{0,9}(/[A-Z]{2,5})?$")  # stocks, and crypto pairs like BTC/USD
 
 
 def _number(label: str, name: str, value: Any) -> float:
@@ -153,11 +164,11 @@ def parse_config(raw: dict[str, Any]) -> Config:
 
 
 def _parse_config(raw: dict[str, Any]) -> Config:
-    from guardrails.limits import LimitsError
+    from taylortrader.guardrails.limits import LimitsError
     from taylortrader.strategies import get_strategy  # avoid import cycle
 
     _reject_secrets(raw)
-    known = {"mode", "dry_run", "data_dir", "feed", "strategies", "guardrails", "alerts", "service", "ai", "invest"}
+    known = {"mode", "dry_run", "data_dir", "feed", "strategies", "guardrails", "alerts", "service", "ai", "invest", "mcp"}
     unknown = set(raw) - known
     if unknown:
         raise ConfigError(f"unknown setting(s): {sorted(unknown)}")
@@ -165,12 +176,13 @@ def _parse_config(raw: dict[str, Any]) -> Config:
     mode = raw.get("mode", "paper")
     if mode not in ("paper", "live"):
         raise ConfigError(f"mode must be 'paper' or 'live', got {mode!r}")
-    dry_run = raw.get("dry_run", False)
+    dry_run = raw.get("dry_run", True)
     if not isinstance(dry_run, bool):
         raise ConfigError("dry_run must be true or false")
-    feed = raw.get("feed", "iex")
+    feed = raw.get("feed", "yahoo")
     if feed not in FEEDS:
-        raise ConfigError(f"feed must be one of {FEEDS}, got {feed!r}")
+        raise ConfigError(f"feed must be one of {FEEDS}, got {feed!r} (SIP is for backtests: "
+                          "its newest 15 minutes are held back, too late to trade on)")
     try:
         limits = Limits.from_config(raw.get("guardrails"))
     except LimitsError as e:
@@ -239,8 +251,8 @@ def _parse_config(raw: dict[str, Any]) -> Config:
         raise ConfigError(f"[ai] effort must be one of {EFFORTS}")
     if not re.match(r"^[A-Za-z0-9][A-Za-z0-9._:/@-]{0,99}$", str(ai.model)):
         raise ConfigError("[ai] model must be a model name like claude-opus-5-5, sonnet or llama3.1")
-    if ai.endpoint and not re.match(r"^https?://[^\s]+$", ai.endpoint):
-        raise ConfigError("[ai] endpoint must be an http(s) address")
+    if ai.endpoint and not _ADDRESS.match(ai.endpoint):
+        raise ConfigError("[ai] endpoint must be an https address (plain http only for this computer)")
     if not 1 <= int(ai.max_calls_per_day) <= 2000:
         raise ConfigError("[ai] max_calls_per_day must be between 1 and 2000")
     if not 10 <= int(ai.timeout_seconds) <= 600:
@@ -248,8 +260,11 @@ def _parse_config(raw: dict[str, Any]) -> Config:
 
     invest = parse_invest(raw.get("invest", {}), owners)
     alerts = _section(AlertsConfig, "alerts")
-    if not re.match(r"^https?://[^\s]+$", alerts.ntfy_server):
-        raise ConfigError("[alerts] ntfy_server must be an http(s) address")
+    if not _ADDRESS.match(alerts.ntfy_server):
+        raise ConfigError("[alerts] ntfy_server must be an https address (plain http only for this computer)")
+    mcp = _section(MCPConfig, "mcp")
+    if not isinstance(mcp.allow_live_selling, bool):
+        raise ConfigError("[mcp] allow_live_selling must be true or false")
     if not re.match(r"^[A-Za-z0-9.\-]{1,253}$", alerts.smtp_host):
         raise ConfigError("[alerts] smtp_host must be a host name")
     if isinstance(alerts.smtp_port, bool) or not isinstance(alerts.smtp_port, int) or not 1 <= alerts.smtp_port <= 65535:
@@ -275,13 +290,14 @@ def _parse_config(raw: dict[str, Any]) -> Config:
         service=service,
         ai=ai,
         invest=invest,
+        mcp=mcp,
     )
 
 
 def parse_invest(block: dict[str, Any], owners: dict[str, str]) -> InvestConfig:
     from datetime import date
 
-    from guardrails.invest import HARD_MAX_CONTRIBUTION
+    from taylortrader.guardrails.invest import HARD_MAX_CONTRIBUTION
 
     try:
         inv = InvestConfig(**block)
@@ -366,6 +382,7 @@ def config_to_dict(cfg: Config) -> dict[str, Any]:
         "service": asdict(cfg.service),
         "ai": asdict(cfg.ai),
         "invest": asdict(cfg.invest),
+        "mcp": asdict(cfg.mcp),
     }
 
 
@@ -396,7 +413,7 @@ def render_toml(data: dict[str, Any], name: str = "config.toml") -> str:
         lines += ["", "[[strategies]]", *_toml_table({k: v for k, v in sc.items() if k != "params"})]
         if sc.get("params"):
             lines += ["[strategies.params]", *_toml_table(sc["params"])]
-    for section in ("guardrails", "alerts", "service", "ai"):
+    for section in ("guardrails", "alerts", "service", "ai", "mcp"):
         if data.get(section):
             lines += ["", f"[{section}]", *_toml_table(data[section])]
     inv = data.get("invest")

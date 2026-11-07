@@ -1,12 +1,13 @@
+from dataclasses import replace
 from datetime import UTC, datetime
 
 import pandas as pd
 import pytest
 from fastapi.testclient import TestClient
 
-from guardrails import Position
 from taylortrader import secrets as secrets_mod
 from taylortrader.config import Config, StrategyConfig, load_config, save_config
+from taylortrader.guardrails import Position
 from taylortrader.service import kill_file
 from taylortrader.web import api as api_mod
 from taylortrader.web.api import create_app
@@ -70,7 +71,7 @@ def make_client(tmp_path, cfg: Config | None):
 def client(tmp_path):
     env = tmp_path / ".env"
     env.write_text("ALPACA_PAPER_KEY_ID=goodpaper\nALPACA_PAPER_SECRET_KEY=s3cretpaper\n")
-    cfg = Config(data_dir=tmp_path / "var", strategies=[StrategyConfig(name="macd_rsi", symbols=["VRT"])])
+    cfg = Config(data_dir=tmp_path / "var", dry_run=False, strategies=[StrategyConfig(name="macd_rsi", symbols=["VRT"])])
     c = make_client(tmp_path, cfg)
     c.rt.journal.beat()
     return c
@@ -442,12 +443,13 @@ def lan_clients(tmp_path, monkeypatch):
 
     monkeypatch.setattr(api_mod, "mac_name", lambda: "Test-Mac")
     (tmp_path / ".env").write_text("ALPACA_PAPER_KEY_ID=goodpaper\nALPACA_PAPER_SECRET_KEY=s3cretpaper\n")
-    base = make_client(tmp_path, Config(data_dir=tmp_path / "var",
+    base = make_client(tmp_path, Config(data_dir=tmp_path / "var", dry_run=False,
                                         strategies=[StrategyConfig(name="macd_rsi", symbols=["VRT"])]))
     app = create_app(base.rt, cache_ttl=0, passcode=CODE)
     mac = TestClient(app, base_url="http://127.0.0.1", client=("127.0.0.1", 50000))
     phone = TestClient(app, base_url="http://192.168.1.10:8787", client=PHONE)
     phone_write = {"X-TaylorTrader": "1", "Origin": "http://192.168.1.10:8787"}
+    mac.rt = base.rt
     return mac, phone, phone_write, remote
 
 
@@ -615,3 +617,41 @@ def test_control_characters_in_a_setting_are_a_clear_error(client):
     cfg["alerts"]["email_from"] = "a\x01b"
     r = client.put("/api/settings", json={"config": cfg}, headers=WRITE)
     assert r.status_code == 422
+
+
+def test_phone_on_live_can_pause_and_stop_but_not_resume_or_start(tmp_path, monkeypatch):
+    mac, phone, w, _ = lan_clients(tmp_path, monkeypatch)
+    phone.post("/api/login", json={"passcode": CODE}, headers=w)
+    path = tmp_path / "config.toml"
+    save_config(replace(load_config(path), mode="live"), path)
+    with (tmp_path / ".env").open("a") as f:
+        f.write("ALPACA_LIVE_KEY_ID=goodlive\nALPACA_LIVE_SECRET_KEY=s3cretlive\nTAYLORTRADER_ALLOW_LIVE=1\n")
+    mac.rt.reload()
+    assert phone.post("/api/pause", json={"paused": True}, headers=w).status_code == 200
+    r = phone.post("/api/pause", json={"paused": False}, headers=w)
+    assert r.status_code == 403 and "resumed on the Mac" in r.json()["detail"]
+    assert phone.post("/api/service", json={"action": "start"}, headers=w).status_code == 403
+    assert mac.post("/api/pause", json={"paused": False}, headers=WRITE).status_code == 200
+
+
+def test_phone_cant_change_what_claude_may_do(tmp_path, monkeypatch):
+    _, phone, w, _ = lan_clients(tmp_path, monkeypatch)
+    phone.post("/api/login", json={"passcode": CODE}, headers=w)
+    s = phone.get("/api/settings").json()
+    s["config"]["mcp"]["allow_live_selling"] = True
+    r = phone.put("/api/settings", json={"config": s["config"], "revision": s["revision"]}, headers=w)
+    assert r.status_code == 403 and "Mac" in r.json()["detail"]
+
+
+def test_moving_where_a_secret_goes_forgets_the_secret(client):
+    env = client.path.parent / ".env"
+    with env.open("a") as f:
+        f.write("NTFY_TOPIC=tt-topic-123\nOPENAI_API_KEY=sk-test-abc\n")
+    s = client.get("/api/settings").json()
+    s["config"]["alerts"]["ntfy_server"] = "https://ntfy.example.org"
+    r = client.put("/api/settings", json={"config": s["config"], "revision": s["revision"]}, headers=WRITE)
+    assert r.status_code == 200, r.text
+    text = env.read_text()
+    assert "NTFY_TOPIC" not in text and "OPENAI_API_KEY" in text  # only the one that would have moved
+    events = [e["message"] for e in client.rt.journal.events_since("")]
+    assert any("NTFY_TOPIC removed" in m for m in events)

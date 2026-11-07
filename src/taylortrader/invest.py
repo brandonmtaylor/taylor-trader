@@ -23,9 +23,9 @@ from dataclasses import replace
 from datetime import date, timedelta
 from zoneinfo import ZoneInfo
 
-from guardrails.invest import MIN_ORDER, check_invest_buy
 from taylortrader.alerts import Level
 from taylortrader.config import InvestConfig
+from taylortrader.guardrails.invest import MIN_ORDER, check_invest_buy
 
 log = logging.getLogger(__name__)
 NY = ZoneInfo("America/New_York")
@@ -161,6 +161,7 @@ class InvestRunner:
         self.guardrails, self.now, self.dry_run = guardrails, now, dry_run
         self._assets_ok: tuple[date, list[str]] | None = None  # (day checked, problems)
         self._calendar: tuple[date, set[date] | None] | None = None  # (day checked, open days)
+        self.kill_check = lambda: False  # re-read just before a buy is sent
 
     def _open_days(self, today: date) -> set[date] | None:
         """Market days for the next ~13 months, checked once a day. None if the calendar can't be read."""
@@ -274,6 +275,8 @@ class InvestRunner:
         if mode == "preview":
             self.journal.invest_mark(r["id"], "preview")
             return True
+        if self.kill_check():
+            self.guardrails.kill_switch = True
         d = check_invest_buy(symbol, notional, account, plan_symbols=self.inv.symbols,
                              max_notional=self.inv.amount, kill_switch=self.guardrails.kill_switch)
         reason = f"invest plan {period}: ${notional:,.2f}"

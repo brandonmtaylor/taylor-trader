@@ -11,8 +11,8 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 
-from guardrails.engine import Decision
-from guardrails.models import AccountSnapshot
+from .engine import Decision
+from .models import AccountSnapshot
 
 HARD_MAX_CONTRIBUTION = 100_000.0  # dollars per contribution; changing it is a reviewed code change
 MIN_ORDER = 1.0                    # Alpaca's smallest dollar-amount order

@@ -21,11 +21,11 @@ from zoneinfo import ZoneInfo
 
 import pandas as pd
 
-from guardrails import Guardrails, find_unmanaged_positions
 from taylortrader import indicators, report, stats
 from taylortrader.alerts import Alerts, Level
 from taylortrader.config import Config, StrategyConfig
 from taylortrader.executor import Executor
+from taylortrader.guardrails import Guardrails, find_unmanaged_positions
 from taylortrader.journal import Journal
 from taylortrader.strategies import Bars, Strategy, get_strategy
 
@@ -37,7 +37,8 @@ BAR = {"1Min": timedelta(minutes=1), "5Min": timedelta(minutes=5), "15Min": time
 LOOKBACK = {"1Min": timedelta(days=3), "5Min": timedelta(days=10), "15Min": timedelta(days=20),
             "1Hour": timedelta(days=90), "1Day": timedelta(days=420)}
 MAX_CONSECUTIVE_ERRORS = 5
-NO_PRICES_AFTER = timedelta(hours=1)  # at least this long with no new bar during market hours
+NO_PRICES_AFTER = timedelta(hours=1)
+EXIT_RETRY_AFTER = timedelta(minutes=5)  # a refused sell is retried this often, not every check  # at least this long with no new bar during market hours
 
 
 def kill_file(cfg: Config) -> Path:
@@ -93,6 +94,7 @@ class Service:
         self.invest = InvestRunner(self.cfg, self.broker, self.journal, self.alerts, self.guardrails, self.now,
                                    self.dry_run)
         self.executor.reserved = self.invest.reserved
+        self.executor.kill_check = self.invest.kill_check = lambda: kill_file(self.cfg).exists()
         # One instance per configured strategy, looked up by symbol (each symbol has one owner).
         # Keying by name would let two blocks of the same strategy overwrite each other's settings.
         self.strategy_for: dict[str, Strategy] = {}
@@ -110,6 +112,8 @@ class Service:
                 self.strategy_for[sym] = strat
         self.owner: dict[str, StrategyConfig] = {s: sc for sc in self.cfg.enabled_strategies for s in sc.symbols}
         self.last_bar: dict[tuple[str, str], pd.Timestamp] = {}
+        self.exit_failed: dict[str, datetime] = {}  # symbol -> when its last sell was refused
+        self.foreign: set[str] = set()  # strategy symbols held, but not bought by the bot
         self.open_buys: set[str] | None = None  # symbols with a buy working, read once per check
         self.last_new_bar: dict[tuple[str, str], datetime] = {}  # when each one last got a new bar
         self.session_date = None
@@ -321,7 +325,8 @@ class Service:
         for symbol in set(self.known_positions) - set(held):
             if not self.journal.sold_since(symbol, cutoff.isoformat(), self.broker.mode):
                 self.journal.event("stop_hit", f"{symbol} position closed at the broker (stop or take-profit)")
-                self.alerts.send(f"Position closed: {symbol}", self._closed_at_broker(symbol), Level.WARNING)
+                self.alerts.send(f"Position closed: {symbol}", self._closed_at_broker(symbol), Level.WARNING,
+                                 key=f"closed:{symbol}:{self.now().isoformat()}")
         self.known_positions = held
         self.known_entry = {s: p.avg_entry_price for s, p in snap.positions.items()}
 
@@ -329,8 +334,11 @@ class Service:
         # A position with a sell already waiting (e.g. sold from the dashboard after hours) had its
         # stop cancelled on purpose. Re-adding one would hold the shares and block that sell.
         selling = self.broker.symbols_selling()
-        managed = set(self.owner)
         today = self.now().astimezone(NY).date()
+        # A strategy owns the shares it bought, not ones you held before giving it the symbol.
+        self.foreign = {s for s in snap.positions if s in self.owner
+                        and not self.journal.bot_holds(s, self.executor.mode)}
+        managed = set(self.owner) - self.foreign
         # Invest plan holdings are managed by the plan and carry no stop on purpose.
         plan = set(self.cfg.invest.symbols)
         trading = {s: p for s, p in snap.positions.items() if s not in plan}
@@ -338,9 +346,20 @@ class Service:
             if symbol in selling:
                 continue
             pos = snap.positions[symbol]
-            sc = self.owner.get(symbol)
-            if sc and self.cfg.service.auto_protect and "no stop-loss order at the broker" in issues:
+            sc = None if symbol in self.foreign else self.owner.get(symbol)
+            if symbol in self.foreign:
+                if self.unmanaged_note_date.get(symbol) != today:
+                    self.unmanaged_note_date[symbol] = today
+                    self.alerts.send(f"Not managing {symbol}", f"You hold {symbol} and a strategy watches it, but the "
+                                     "bot didn't buy these shares, so it won't set a stop on them or sell them. It "
+                                     "starts trading the symbol once they're gone.", Level.WARNING,
+                                     key=f"foreign:{symbol}:{today}")
+            elif sc and self.cfg.service.auto_protect and "no stop-loss order at the broker" in issues:
                 self._protect(sc, pos)
+            elif sc and not self.cfg.service.auto_protect and "no stop-loss order at the broker" in issues:
+                self.alerts.send(f"{symbol} has NO stop", "A strategy owns it and its stop-loss is gone. Automatic "
+                                 "protection is off in Settings, so put a stop back at Alpaca or sell it.",
+                                 Level.CRITICAL, key=f"nostop-off:{symbol}:{today}")
             elif sc is None and self.unmanaged_note_date.get(symbol) != today:
                 self.unmanaged_note_date[symbol] = today
                 self.alerts.send(f"Unmanaged position: {symbol}", "; ".join(issues) +
@@ -377,14 +396,14 @@ class Service:
         price = pos.market_value / pos.qty if pos.qty else 0
         if self.dry_run:
             self.alerts.send(f"[dry run] {pos.symbol} has no stop", f"Would place stop at ${stop:,.2f}",
-                             Level.WARNING, key=f"protect:{pos.symbol}")
+                             Level.WARNING, key=f"protect-dry:{pos.symbol}")
             return
         if price and price <= stop:
             self.journal.event("protect", f"{pos.symbol} at ${price:,.2f} is below its stop ${stop:,.2f}; exiting",
                                "warning")
             self.alerts.send(f"{pos.symbol}: stop level breached while unprotected",
                              f"Price ${price:,.2f} is below the {sc.stop_loss_pct}% stop (${stop:,.2f}). Exiting.",
-                             Level.CRITICAL, key=f"protect:{pos.symbol}")
+                             Level.CRITICAL, key=f"protect-breach:{pos.symbol}")
             try:
                 self.executor.exit(sc.name, pos.symbol, pos.qty, price, "stop level breached while unprotected")
             except Exception as e:  # noqa: BLE001 - already alerted as critical; keep protecting the rest
@@ -394,13 +413,16 @@ class Service:
             self.broker.place_stop(pos.symbol, pos.qty, stop)
             self.journal.event("protect", f"recreated stop for {pos.symbol} at ${stop:,.2f}", "warning")
             self.alerts.send(f"Recreated stop: {pos.symbol}", f"Stop was missing. New GTC stop at ${stop:,.2f}.",
-                             Level.WARNING, key=f"protect:{pos.symbol}")
+                             Level.WARNING, key=f"protect-recreated:{pos.symbol}")
         except Exception as e:  # noqa: BLE001
             self.alerts.send(f"{pos.symbol} has NO stop", f"Couldn't recreate it: {e}", Level.CRITICAL,
-                             key=f"protect:{pos.symbol}")
+                             key=f"protect-nostop:{pos.symbol}")
 
     def evaluate(self, sc: StrategyConfig, symbol: str, snap) -> None:
         now = self.now()
+        if symbol in self.foreign:  # your shares, not the bot's: nothing to decide (alerted daily)
+            self.last_new_bar[(sc.name, symbol)] = now
+            return
         df = self.market_data.bars(symbol, sc.timeframe, now - LOOKBACK[sc.timeframe])
         df = completed_bars(df, sc.timeframe, now)
         strat = self.strategy_for[symbol]
@@ -420,14 +442,21 @@ class Service:
         price = float(b.close[i])
         pos = snap.positions.get(symbol)
         if pos and pos.qty > 0:
+            failed = self.exit_failed.get(symbol)
+            if failed and now - failed < EXIT_RETRY_AFTER:
+                # Each try cancels the stop for a moment: don't retry a refused sell every check.
+                self.last_bar[key] = previous
+                return
             sig = strat.exit(b, i, pos.avg_entry_price)
             if sig:
                 try:
                     self.executor.exit(sc.name, symbol, pos.qty, price, f"{sc.name}: {sig.reason}")
+                    self.exit_failed.pop(symbol, None)
                 except Exception:
-                    # Decide on this bar again next check: many exit signals fire on one bar only,
+                    # Decide on this bar again later: many exit signals fire on one bar only,
                     # so marking it handled would mean the sell never happens.
                     self.last_bar[key] = previous
+                    self.exit_failed[symbol] = now
                     raise
         else:
             if sc.timeframe != "1Day" and now - (bar_ts + BAR[sc.timeframe]) > 2 * BAR[sc.timeframe]:
@@ -464,7 +493,7 @@ class Service:
         if quiet:
             names = ", ".join(sorted(set(quiet)))
             self.journal.event("no-prices", f"No new prices for {names}", "warning")
-            self.alerts.send("No new prices", f"{names}: no new price data, so the bot can't decide anything "
+            self.alerts.send("No new prices", f"{names}: no new price data (or not enough history yet), so the bot can't decide anything "
                              "for these right now. Stop-losses at Alpaca still work.\n"
                              "Check the data feed in Settings and the logs.",
                              Level.WARNING, key=f"no-prices:{today}:{names}", email_copy=True)

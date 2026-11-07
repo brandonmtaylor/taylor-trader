@@ -46,7 +46,7 @@ def _cross_below(b: Bars, i: int, ma: np.ndarray) -> bool:
 class MacdRsi(Strategy):
     name = "macd_rsi"
     description = (
-        "The original bot's main strategy. Buy when MACD crosses above its signal line below zero "
+        "Buy when MACD crosses above its signal line below zero "
         "and RSI dipped under rsi_buy in the recent window. Sell when RSI rises above rsi_sell."
     )
 
@@ -214,7 +214,7 @@ class Ma20Over200Rsi(Strategy):
 class Chaikin(Strategy):
     name = "chaikin"
     description = (
-        "Original '20_DAY_MA_RSI_CHAIKIN'. Buy when RSI < rsi_buy, or Chaikin money flow is above "
+        "Buy when RSI < rsi_buy, or Chaikin money flow is above "
         "buy_threshold and rising. Sell on a cross below MA20, or Chaikin falling through sell_threshold."
     )
 
@@ -246,7 +246,7 @@ class Pullback(Strategy):
     name = "pullback"
     description = (
         "Three rising bars on rising volume, a two-of-three dip on lighter volume, then two rising bars: buy. "
-        "Sell when RSI > rsi_sell. (Fixed: the original scanned all history, so one old match meant 'buy' forever.)"
+        "Sell when RSI > rsi_sell."
     )
 
     @dataclass(frozen=True)

@@ -5,8 +5,6 @@ from types import SimpleNamespace
 
 import pytest
 
-from guardrails import AccountSnapshot, Limits, Position
-from guardrails.invest import check_invest_buy
 from taylortrader import invest
 from taylortrader.alerts import Alerts
 from taylortrader.config import (
@@ -21,6 +19,8 @@ from taylortrader.config import (
     render_toml,
     save_config,
 )
+from taylortrader.guardrails import AccountSnapshot, Limits, Position
+from taylortrader.guardrails.invest import check_invest_buy
 from taylortrader.journal import Journal
 from taylortrader.service import Service
 from tests.test_service import NOW, FakeBroker, FakeData, Recorder

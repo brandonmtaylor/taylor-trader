@@ -8,9 +8,9 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from guardrails import AccountSnapshot, Limits, Position
 from taylortrader.alerts import Alerts, Level, Notifier
 from taylortrader.config import Config, ConfigError, ServiceConfig, StrategyConfig, load_config, parse_config
+from taylortrader.guardrails import AccountSnapshot, Limits, Position
 from taylortrader.journal import Journal
 from taylortrader.service import Service, completed_bars, kill_file, watchdog
 from taylortrader.strategies import Signal, Strategy, register
@@ -128,7 +128,7 @@ class FakeData:
 @pytest.fixture
 def svc(tmp_path):
     FLAGS.update(entry=False, exit=False)
-    cfg = Config(data_dir=tmp_path, strategies=[
+    cfg = Config(data_dir=tmp_path, dry_run=False, strategies=[
         StrategyConfig(name="test_signal", symbols=["VRT"], timeframe="5Min", allocation_pct=20, stop_loss_pct=10)],
         limits=Limits(), service=ServiceConfig())
     rec = Recorder()
@@ -136,6 +136,11 @@ def svc(tmp_path):
                 now=lambda: NOW, sleep=lambda s: None)
     s.rec = rec
     return s
+
+
+def _own(s, symbol):
+    """The bot bought this position (so it manages it), as the journal would show."""
+    s.journal.record_order(mode="paper", strategy="test_signal", symbol=symbol, side="buy", status="filled")
 
 
 # --- service --------------------------------------------------------------------------------------
@@ -161,6 +166,7 @@ def test_same_bar_is_not_traded_twice(svc):
 
 def test_exit_signal_closes_position(svc):
     svc.broker.positions["VRT"] = Position("VRT", 18, 1980, 100)
+    _own(svc, "VRT")
     svc.broker.stops.add("VRT")
     FLAGS["exit"] = True
     svc.tick()
@@ -175,6 +181,7 @@ def test_kill_switch_blocks_entries_not_exits(svc):
     assert svc.journal.recent_orders()[0]["status"] == "blocked"
     assert any("Kill switch ON" in t for t in svc.rec.titles())
     svc.broker.positions["VRT"] = Position("VRT", 18, 1980, 100)
+    _own(svc, "VRT")
     svc.broker.stops.add("VRT")
     svc.last_bar.clear()
     FLAGS.update(entry=False, exit=True)
@@ -191,6 +198,7 @@ def test_dry_run_never_touches_broker(svc):
 
 def test_missing_stop_on_owned_position_is_recreated(svc):
     svc.broker.positions["VRT"] = Position("VRT", 18, 1980, 100)  # $110/share, entry $100
+    _own(svc, "VRT")
     svc.tick()
     assert svc.broker.stops_placed == [("VRT", 18, 90.0)]
 
@@ -198,6 +206,7 @@ def test_missing_stop_on_owned_position_is_recreated(svc):
 def test_position_with_a_sell_waiting_is_left_alone(svc):
     # Sold from the dashboard after hours: its stop was cancelled on purpose; re-adding one would block the sell.
     svc.broker.positions["VRT"] = Position("VRT", 18, 1980, 100)
+    _own(svc, "VRT")
     svc.broker.selling = {"VRT"}
     svc.tick()
     assert svc.broker.stops_placed == [] and svc.broker.closes == []
@@ -206,6 +215,7 @@ def test_position_with_a_sell_waiting_is_left_alone(svc):
 def test_unprotected_position_below_stop_exits_with_critical_alert(svc):
     # The VRT scenario: bought at 315, no stop, now 224.
     svc.broker.positions["VRT"] = Position("VRT", 36, 36 * 224, 315)
+    _own(svc, "VRT")
     svc.tick()
     assert svc.broker.closes == ["VRT"]
     assert any(level is Level.CRITICAL for _, _, level in svc.rec.sent)
@@ -221,6 +231,7 @@ def test_unmanaged_position_alerts_but_is_not_touched(svc):
 
 def test_broker_side_stop_hit_is_reported(svc):
     svc.broker.positions["VRT"] = Position("VRT", 18, 1980, 100)
+    _own(svc, "VRT")
     svc.broker.stops.add("VRT")
     svc.tick()
     del svc.broker.positions["VRT"]
@@ -232,6 +243,8 @@ def test_stop_hit_alert_says_the_price_and_what_it_lost(svc):
     from taylortrader.stats import Fill
 
     svc.broker.positions["VRT"] = Position("VRT", 4, 808, 206.44)
+
+    _own(svc, "VRT")
     svc.broker.stops.add("VRT")
     svc.tick()
     del svc.broker.positions["VRT"]
@@ -244,6 +257,7 @@ def test_stop_hit_alert_says_the_price_and_what_it_lost(svc):
 
 def test_sell_fill_alert_says_what_it_made(svc):
     svc.broker.positions["VRT"] = Position("VRT", 10, 1100, 100)
+    _own(svc, "VRT")
     svc.broker.stops.add("VRT")
     svc.tick()
     svc.journal.record_order(mode="paper", strategy="test_signal", symbol="VRT", side="sell", status="submitted",
@@ -497,7 +511,7 @@ def test_ai_buy_goes_through_guardrails_like_any_strategy(tmp_path):
             return llm.validate({"action": "buy", "confidence": 0.9, "summary": "Looks good.",
                                  "pros": [], "cons": []}, allowed)
 
-    cfg = Config(data_dir=tmp_path, strategies=[
+    cfg = Config(data_dir=tmp_path, dry_run=False, strategies=[
         StrategyConfig(name="ai", symbols=["VRT"], timeframe="5Min", allocation_pct=20, stop_loss_pct=10)],
         limits=Limits(), service=ServiceConfig())
     j = Journal(tmp_path / "j.db")
@@ -559,6 +573,7 @@ def _tick(s):
 
 def test_a_failed_exit_is_retried_on_the_same_bar(svc):
     svc.broker.positions["VRT"] = Position("VRT", 18, 1980, 100)
+    _own(svc, "VRT")
     svc.broker.stops.add("VRT")
     FLAGS["exit"] = True
     real, calls = svc.broker.close_position, []
@@ -571,6 +586,9 @@ def test_a_failed_exit_is_retried_on_the_same_bar(svc):
 
     svc.broker.close_position = flaky
     _tick(svc)
+    _tick(svc)  # right after: not retried yet, since each try lifts the stop for a moment
+    assert calls == ["VRT"]
+    svc.now = lambda: NOW + timedelta(minutes=6)
     _tick(svc)
     assert calls == ["VRT", "VRT"] and svc.broker.closes == ["VRT"]
 
@@ -593,6 +611,7 @@ def test_a_restart_doesnt_rebuy_on_the_same_bar(svc):
 
 def test_an_unclosable_breached_position_doesnt_stop_the_check(svc):
     svc.broker.positions["VRT"] = Position("VRT", 36, 36 * 224, 315)
+    _own(svc, "VRT")
 
     def refuse(symbol, reason=""):
         raise RuntimeError("market closed")
@@ -774,6 +793,7 @@ def test_blocked_orders_are_not_trades_and_the_note_says_so(svc):
 def test_no_note_when_holding_paused_turned_off_or_before_the_close(svc):
     _after_close(svc, 30)
     svc.broker.positions["VRT"] = Position("VRT", 1, 100, 100)
+    _own(svc, "VRT")
     svc.broker.stops.add("VRT")
     svc.tick()
     svc.broker.positions.clear()
@@ -809,3 +829,59 @@ def test_open_orders_are_read_once_per_check(svc):
     assert len(calls) == 1
     assert sorted(i.symbol for i in svc.broker.entries) == ["AAPL", "VRT"]  # NVDA already has a buy working
 
+
+# --- review fixes ---------------------------------------------------------------------------------
+
+def test_pause_pressed_mid_check_stops_the_buy(svc):
+    FLAGS["entry"] = True
+    real = svc.broker.snapshot
+
+    def snapshot_then_pause():
+        kill_file(svc.cfg).write_text("on")  # "sell everything" landing while the check runs
+        return real()
+
+    svc.broker.snapshot = snapshot_then_pause
+    svc.tick()
+    assert svc.broker.entries == []
+    assert svc.journal.db.execute("SELECT status FROM orders").fetchone()["status"] == "blocked"
+
+
+def test_shares_the_bot_didnt_buy_are_left_alone(svc):
+    svc.broker.positions["VRT"] = Position("VRT", 18, 1980, 100)  # bought by you, then VRT added to a strategy
+    FLAGS["exit"] = True
+    svc.tick()
+    assert svc.broker.stops_placed == [] and svc.broker.closes == []
+    assert any(t == "Not managing VRT" for t in svc.rec.titles())
+    _own(svc, "VRT")  # once the bot's own buy is the last word, it manages the position
+    svc.tick()
+    assert svc.broker.stops_placed or svc.broker.closes
+
+
+def test_a_critical_stop_alert_isnt_swallowed_by_a_routine_one(svc):
+    svc.broker.positions["VRT"] = Position("VRT", 18, 1980, 100)
+    _own(svc, "VRT")
+    svc.tick()  # stop recreated: a warning
+    svc.broker.stops.clear()
+    svc.broker.place_stop = lambda *a: (_ for _ in ()).throw(RuntimeError("rejected"))
+    svc.tick()
+    assert "Recreated stop: VRT" in svc.rec.titles() and "VRT has NO stop" in svc.rec.titles()
+
+
+def test_no_stop_is_reported_when_auto_protect_is_off(svc):
+    svc.cfg = dataclasses.replace(svc.cfg, service=ServiceConfig(auto_protect=False))
+    svc.broker.positions["VRT"] = Position("VRT", 18, 1980, 100)
+    _own(svc, "VRT")
+    svc.tick()
+    assert svc.broker.stops_placed == []
+    assert any(t == "VRT has NO stop" and lvl == Level.CRITICAL for t, _, lvl in svc.rec.sent)
+
+
+def test_an_order_alpaca_took_despite_an_error_is_recorded(svc):
+    FLAGS["entry"] = True
+    taken = SimpleNamespace(id="o-late")
+    svc.broker.submit_entry = lambda intent, client_order_id=None: (_ for _ in ()).throw(TimeoutError("read timed out"))
+    svc.broker.order_by_client_id = lambda cid: taken
+    svc.tick()
+    row = svc.journal.db.execute("SELECT status, broker_order_id FROM orders").fetchone()
+    assert (row["status"], row["broker_order_id"]) == ("submitted", "o-late")
+    assert "VRT" in svc.executor.inflight

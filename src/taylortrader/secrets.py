@@ -98,7 +98,8 @@ def get_secret(name: str, dotenv_path: Path | None = None, *, redact: bool = Tru
 def live_trading_confirmed(dotenv_path: Path | None = None) -> bool:
     """Live needs this flag in the environment, .env or Keychain. The dashboard sets it only
     after the typed go-live confirmation, and removes it when you switch back to paper."""
-    return get_secret(LIVE_CONFIRM_VAR, dotenv_path, redact=False) is not None
+    flag = get_secret(LIVE_CONFIRM_VAR, dotenv_path, redact=False)
+    return flag is not None and flag.get_secret_value().strip() == "1"
 
 
 def load_alpaca_credentials(mode: str, dotenv_path: Path | None = None) -> AlpacaCredentials:
@@ -148,7 +149,8 @@ def _write_dotenv(path: Path, name: str, value: str | None) -> None:
     if value is not None:
         lines.append(f"{name}={value}")
     tmp = path.with_name(path.name + ".tmp")  # private from the moment it exists, then swapped in
-    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    tmp.unlink(missing_ok=True)  # a leftover file would keep its own, looser permissions
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     with os.fdopen(fd, "w") as f:
         f.write("\n".join(lines) + "\n")
     tmp.replace(path)

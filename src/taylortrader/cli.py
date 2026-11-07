@@ -87,8 +87,8 @@ def cmd_doctor(args) -> int:
 
 
 def cmd_account(args) -> int:
-    from guardrails import find_unmanaged_positions
     from taylortrader.broker import AlpacaBroker
+    from taylortrader.guardrails import find_unmanaged_positions
 
     cfg = load_config(args.config)
     broker = AlpacaBroker(load_alpaca_credentials(cfg.mode))
@@ -505,6 +505,7 @@ def cmd_dashboard(args) -> int:
     # Don't wait on open browser polls when stopping: a restart after an update should take a second.
     uvicorn.run(create_app(rt, passcode=passcode), host="0.0.0.0" if passcode else "127.0.0.1",
                 port=args.port, log_level="warning", log_config=None,  # our handlers: they redact
+                proxy_headers=False,  # a forwarded-for header must never make a request look local
                 timeout_graceful_shutdown=2)
     return 0
 
@@ -561,6 +562,8 @@ def main(argv: list[str] | None = None) -> int:
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--config", type=Path, help="settings file (default: config.toml in the home folder)")
     parser.add_argument("-v", "--verbose", action="store_true")
+    from taylortrader import __version__
+    parser.add_argument("--version", action="version", version=f"taylortrader {__version__}")
     sub = parser.add_subparsers(dest="cmd")
     sub.add_parser("strategies").set_defaults(fn=cmd_strategies)
     sub.add_parser("doctor").set_defaults(fn=cmd_doctor)

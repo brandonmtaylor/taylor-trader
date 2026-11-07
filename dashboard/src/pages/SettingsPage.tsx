@@ -4,7 +4,7 @@ import { AlpacaKeys } from "../components/Keys";
 import { Labeled, NoticeLine, NumberInput, SecretField, Toggle, useAction } from "../components/forms";
 import { clone, same, type SettingsStore } from "../settings";
 
-type SectionKey = "guardrails" | "alerts" | "service" | "feed" | "ai";
+type SectionKey = "guardrails" | "alerts" | "service" | "feed" | "ai" | "mcp";
 
 /** Edit one part of the config with its own Save button. */
 function useSection<K extends SectionKey>(store: SettingsStore, key: K) {
@@ -143,8 +143,29 @@ export function AlertsSection({ store, setup, onSetup, step, done }: {
 const FEEDS: { id: ConfigDict["feed"]; title: string; text: string }[] = [
   { id: "yahoo", title: "Yahoo Finance", text: "Every exchange, current, free. Unofficial, so if it fails or falls behind the service uses Alpaca IEX until it's back. Recommended." },
   { id: "iex", title: "Alpaca IEX", text: "Official and real time, but only one exchange (about 2–3% of trading). Prices are close; volume is thin." },
-  { id: "sip", title: "Alpaca SIP", text: "Every exchange, but the free plan holds back the newest 15 minutes. Fine for backtests, too late to trade on." },
 ];
+
+function ClaudeSection({ store }: { store: SettingsStore }) {
+  const s = useSection(store, "mcp");
+  if (!s.draft) return null;
+  const d = s.draft;
+  return (
+    <Section id="claude" title="Claude"
+      sub="What Claude may do when you connect it to the bot (optional; see the Guide). It can always read, pause new buys, and change strategies.">
+      <div className="toggles">
+        <Toggle checked={d.allow_live_selling} onChange={(allow_live_selling) => s.setDraft({ ...d, allow_live_selling })}
+          label="Let Claude sell on a live account" />
+      </div>
+      <p className="field__hint">
+        Off: Claude can sell on paper only; on real money you sell here. Claude types its own confirmations, so a
+        misleading news story or message it reads could get it to sell. Turn this on only if you want that.
+        Changed on the Mac only.
+      </p>
+      <SaveRow dirty={s.dirty} busy={s.act.busy} onSave={() => s.save("Saved.")} onReset={s.reset} />
+      <NoticeLine notice={s.act.notice} />
+    </Section>
+  );
+}
 
 function DataSection({ store }: { store: SettingsStore }) {
   const s = useSection(store, "feed");
@@ -345,6 +366,7 @@ export function SettingsPage({ store, setup, onSetup }: { store: SettingsStore; 
         <LimitsSection store={store} />
         <AlertsSection store={store} setup={setup} onSetup={onSetup} />
         <AISection store={store} setup={setup} onSetup={onSetup} />
+        <ClaudeSection store={store} />
         <DataSection store={store} />
         <ServiceSection store={store} setup={setup} onSetup={onSetup} />
       </div>

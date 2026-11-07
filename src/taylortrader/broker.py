@@ -26,7 +26,7 @@ from alpaca.trading.requests import (
     TakeProfitRequest,
 )
 
-from guardrails import AccountSnapshot, OrderIntent, Position, Side
+from taylortrader.guardrails import AccountSnapshot, OrderIntent, Position, Side
 from taylortrader.secrets import AlpacaCredentials
 
 log = logging.getLogger(__name__)
@@ -109,7 +109,7 @@ class AlpacaBroker:
         return out
 
     def open_orders(self) -> list:
-        orders = self._client.get_orders(GetOrdersRequest(status=QueryOrderStatus.OPEN, nested=True))
+        orders = self._client.get_orders(GetOrdersRequest(status=QueryOrderStatus.OPEN, nested=True, limit=TRADES_PAGE))
         flat = []
         for o in orders:
             flat.append(o)
@@ -128,7 +128,7 @@ class AlpacaBroker:
         stop is the highest stop-loss; target is a take-profit (a limit sell that's a bracket leg).
         A plain limit sell placed on its own is a sale in progress, not a target, so it's left out."""
         out: dict[str, dict] = {}
-        orders = self._client.get_orders(GetOrdersRequest(status=QueryOrderStatus.OPEN, nested=True))
+        orders = self._client.get_orders(GetOrdersRequest(status=QueryOrderStatus.OPEN, nested=True, limit=TRADES_PAGE))
         for top in orders:
             for o, is_leg in [(top, False), *((leg, True) for leg in (top.legs or []))]:
                 if o.side != OrderSide.SELL:
@@ -143,7 +143,7 @@ class AlpacaBroker:
     def symbols_selling(self) -> set[str]:
         """Symbols with a sell waiting to fill (a close, not a protective stop or bracket leg),
         e.g. one sent while the market is closed."""
-        orders = self._client.get_orders(GetOrdersRequest(status=QueryOrderStatus.OPEN, nested=True))
+        orders = self._client.get_orders(GetOrdersRequest(status=QueryOrderStatus.OPEN, nested=True, limit=TRADES_PAGE))
         return {o.symbol for o in orders
                 if o.side == OrderSide.SELL and o.order_type in (OrderType.MARKET, OrderType.LIMIT)}
 
@@ -305,8 +305,11 @@ class AlpacaBroker:
     def close_position(self, symbol: str, reason: str = ""):
         # Cancel this symbol's open orders (including stop legs) first, or the close is rejected
         # because the shares are held by the stop order.
+        stops = []  # put back if the sell is refused, so a failing exit never leaves the position bare
         for o in self.open_orders():
             if o.symbol == symbol and o.status not in ("filled", "canceled"):
+                if o.side == OrderSide.SELL and o.order_type in _STOP_TYPES and o.stop_price is not None:
+                    stops.append((float(o.qty or 0), float(o.stop_price)))
                 try:
                     self._client.cancel_order_by_id(o.id)
                 except Exception as e:  # noqa: BLE001  leg may already be gone; never block an exit
@@ -316,7 +319,16 @@ class AlpacaBroker:
         while any(o.symbol == symbol for o in self.open_orders()) and time.monotonic() < deadline:
             time.sleep(0.25)
         log.info("[%s] SELL all %s (%s)", self.mode, symbol, reason)
-        return self._client.close_position(symbol)
+        try:
+            return self._client.close_position(symbol)
+        except Exception:
+            if stops:
+                try:
+                    self.place_stop(symbol, sum(q for q, _ in stops), max(p for _, p in stops))
+                    log.warning("sell of %s refused; its stop is back in place", symbol)
+                except Exception as e:  # noqa: BLE001 - the service's protection check tries again
+                    log.error("sell of %s refused and its stop couldn't be put back: %s", symbol, e)
+            raise
 
     def cancel_all_orders(self, wait: float = 5.0) -> None:
         """Cancel every open order in the account, waiting briefly until Alpaca confirms.

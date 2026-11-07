@@ -1,4 +1,4 @@
-# TaylorTrader configuration. The dashboard (`uv run taylortrader`) writes config.toml for you;
+# TaylorTrader configuration. The dashboard (`taylortrader`) writes config.toml for you;
 # this file documents every setting if you'd rather copy it and edit by hand.
 # No secrets go in this file. See .env.example for keys.
 
@@ -6,25 +6,24 @@
 # which sets TAYLORTRADER_ALLOW_LIVE (the service refuses live without it).
 mode = "paper"
 
-# true: decide and alert, but place no orders. New setups start here.
+# true: decide and alert, but place no orders. New setups start here, and it's the default if left out.
 dry_run = true
 
 # Where the data cache, journal and logs live (git-ignored).
 data_dir = "var"
 
-# Where the service gets price bars. All three are free.
+# Where the service gets price bars. Both are free.
 #   "yahoo" Yahoo Finance: every exchange and current, so it matches backtests (which use SIP).
 #           Unofficial, so if it fails or falls behind the service switches to "iex" on its own
 #           and back again when Yahoo recovers. Hourly strategies always use "iex".
 #   "iex"   Alpaca, real time, but one exchange (~2-3% of volume): prices close, volume thin.
-#   "sip"   Alpaca, every exchange, but the newest 15 minutes are held back. Backtests only.
 feed = "yahoo"
 
 # ---------------------------------------------------------------------------
 # Strategies: pick any from `taylortrader strategies`. Add as many blocks as you want.
 # ---------------------------------------------------------------------------
 [[strategies]]
-name = "macd_rsi"          # the original bot's main strategy
+name = "macd_rsi"          # MACD crossing up while RSI was low
 symbols = ["VRT"]
 timeframe = "5Min"         # 1Min, 5Min, 15Min, 1Hour, 1Day
 allocation_pct = 20        # % of equity per position (guardrails cap this too)
@@ -63,7 +62,7 @@ rsi_sell = 68
 # never loosened. Values above a hard limit are rejected at startup.
 # ---------------------------------------------------------------------------
 [guardrails]
-max_position_pct = 25       # hard limit 50
+max_position_pct = 25       # hard limit 100
 max_total_exposure_pct = 90 # hard limit 100 (no margin)
 max_daily_loss_pct = 3      # hard limit 10
 max_trades_per_day = 10     # hard limit 50
@@ -80,6 +79,9 @@ ntfy_server = "https://ntfy.sh"
 # (security add-generic-password -s taylortrader -a EMAIL_PASSWORD -w).
 # email_from = "you@gmail.com"
 # email_to = ["you@gmail.com"]
+# smtp_host = "smtp.gmail.com"   # another provider's SMTP server (STARTTLS)
+# smtp_port = 587
+# Changing smtp_host or ntfy_server removes the stored password or topic, so it's entered again.
 
 [ai]
 provider = "anthropic"       # "claude-code" (your Claude subscription via Claude Code), "anthropic" (Claude API),
@@ -97,6 +99,10 @@ heartbeat_stale_minutes = 15   # the watchdog alerts if the service is quiet lon
 daily_summary = true
 no_trades_days = 14            # tell you if a strategy holds nothing and hasn't traded this long; 0 is off
 auto_protect = true            # re-create a missing stop on positions a strategy owns
+
+# What Claude may do through the MCP server (`taylortrader mcp`). Changed on this Mac only.
+[mcp]
+allow_live_selling = false     # true lets Claude sell on a live account; it can always sell on paper
 
 # ---------------------------------------------------------------------------
 # Long-term invest plan (optional). Buys a fixed mix of funds on a schedule and holds it: no

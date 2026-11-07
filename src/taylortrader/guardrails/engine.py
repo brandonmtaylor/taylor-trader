@@ -3,8 +3,8 @@ from __future__ import annotations
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 
-from guardrails.limits import Limits
-from guardrails.models import AccountSnapshot, OrderIntent, Side
+from .limits import Limits
+from .models import AccountSnapshot, OrderIntent, Side
 
 
 @dataclass(frozen=True)

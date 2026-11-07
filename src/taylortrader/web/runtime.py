@@ -13,6 +13,7 @@ from pathlib import Path
 
 from taylortrader.config import Config, ConfigError, load_config
 from taylortrader.journal import Journal
+from taylortrader.logging_setup import redact
 from taylortrader.secrets import SecretsError
 
 log = logging.getLogger(__name__)
@@ -76,4 +77,4 @@ class Runtime:
             self.broker_error = str(e)
         except Exception as e:  # noqa: BLE001 - shown on the page, never crashes the dashboard
             log.warning("connect failed: %s", e)
-            self.broker_error = f"{type(e).__name__}: {e}"
+            self.broker_error = redact(f"{type(e).__name__}: {e}")

@@ -29,8 +29,6 @@ from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, Res
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, SecretStr
 
-from guardrails import find_unmanaged_positions
-from guardrails.limits import HARD_LIMITS
 from taylortrader import launchd
 from taylortrader.config import (
     FEEDS,
@@ -42,7 +40,10 @@ from taylortrader.config import (
     parse_invest,
     save_config,
 )
+from taylortrader.guardrails import find_unmanaged_positions
+from taylortrader.guardrails.limits import HARD_LIMITS
 from taylortrader.invest import NY
+from taylortrader.logging_setup import redact
 from taylortrader.secrets import (
     LIVE_CONFIRM_VAR,
     SETTABLE,
@@ -98,7 +99,7 @@ def _broker_call(fn):
         raise
     except Exception as e:  # noqa: BLE001  any broker failure becomes a clear 503
         log.warning("broker call failed: %s", e)
-        raise HTTPException(503, f"Can't reach Alpaca: {type(e).__name__}: {e}") from None
+        raise HTTPException(503, redact(f"Can't reach Alpaca: {type(e).__name__}: {e}")) from None
 
 
 def exit_fields(lv: dict, price: float, qty: float) -> dict:
@@ -253,11 +254,25 @@ def create_app(rt: Runtime, cache_ttl: float = 10.0, project: Path | None = None
         real money, settings are changed on the Mac: a phone can still pause and sell."""
         if here(request):
             return
+        if current.mcp != new.mcp:
+            raise HTTPException(403, "What Claude may do is only changed on the Mac.")
         if current.mode == "live":
             raise HTTPException(403, "With real money, settings can only be changed on the Mac.")
         destinations = lambda c: (c.alerts, c.ai.provider, c.ai.endpoint)
         if destinations(current) != destinations(new):
             raise HTTPException(403, "Alert destinations and the AI provider can only be changed on the Mac.")
+
+    def forget_moved_secrets(current: Config, new: Config) -> None:
+        """Where a key or password is sent decides who can read it. When that address changes, the
+        stored secret is removed and has to be entered again, so anything that can reach this page
+        (another program on this Mac, a tunnel) can't redirect your keys to itself."""
+        moved = [(current.ai.endpoint != new.ai.endpoint, "OPENAI_API_KEY", "the AI endpoint"),
+                 (current.alerts.smtp_host != new.alerts.smtp_host, "EMAIL_PASSWORD", "the email server"),
+                 (current.alerts.ntfy_server != new.alerts.ntfy_server, "NTFY_TOPIC", "the ntfy server")]
+        for changed, name, what in moved:
+            if changed and get_secret(name, rt.dotenv_path) is not None:
+                delete_secret(name, rt.dotenv_path)
+                rt.journal.event("settings", f"{name} removed because {what} changed: enter it again", "warning")
 
     cache = TTLCache(cache_ttl)
     slow_cache = TTLCache(max(cache_ttl, 300.0))  # price history and grades: minutes old is fine
@@ -305,7 +320,7 @@ def create_app(rt: Runtime, cache_ttl: float = 10.0, project: Path | None = None
             if any(w in text for w in ("unauthorized", "not authorized", "forbidden", "40110000")):
                 raise HTTPException(422, f"Alpaca didn't accept these as {mode} keys. Check they're from your "
                                          f"{mode} account and copied in full.") from None
-            raise HTTPException(503, f"Couldn't reach Alpaca: {type(e).__name__}: {str(e)[:200]}") from None
+            raise HTTPException(503, redact(f"Couldn't reach Alpaca: {type(e).__name__}: {str(e)[:200]}")) from None
         return {"ok": True, **info}
 
     # --- reads -----------------------------------------------------------------------------------
@@ -602,6 +617,7 @@ def create_app(rt: Runtime, cache_ttl: float = 10.0, project: Path | None = None
         check_remote_settings(request, current, new)
         save(new)
         rt.journal.event("settings", "settings saved from the dashboard")
+        forget_moved_secrets(current, new)
         return settings()
 
     # --- invest plan ---------------------------------------------------------------------------------
@@ -615,7 +631,7 @@ def create_app(rt: Runtime, cache_ttl: float = 10.0, project: Path | None = None
 
     @app.get("/api/invest")
     def invest_status() -> dict[str, Any]:
-        from guardrails.invest import HARD_MAX_CONTRIBUTION
+        from taylortrader.guardrails.invest import HARD_MAX_CONTRIBUTION
         from taylortrader.invest import EXAMPLES
 
         inv = rt.settings.invest
@@ -752,7 +768,6 @@ def create_app(rt: Runtime, cache_ttl: float = 10.0, project: Path | None = None
             info = test_keys("live")
             if info.get("status") != "ACTIVE":
                 raise HTTPException(422, f"Your live account's status is {info.get('status')}, not ACTIVE.")
-            set_secret(LIVE_CONFIRM_VAR, "1", rt.dotenv_path)
             # A plan confirmed for paper money doesn't carry over to real money: it goes back to
             # preview, and buying for real needs the "LIVE BUY ..." confirmation.
             inv = replace(cfg.invest, preview=True) if cfg.invest.enabled else cfg.invest
@@ -761,15 +776,25 @@ def create_app(rt: Runtime, cache_ttl: float = 10.0, project: Path | None = None
             delete_secret(LIVE_CONFIRM_VAR, rt.dotenv_path)
             new = replace(cfg, mode="paper", dry_run=body.mode == "dry-run")
         before = describe_mode(cfg.mode, cfg.dry_run)
-        save(new)
+        if new.mode == "live":
+            set_secret(LIVE_CONFIRM_VAR, "1", rt.dotenv_path)  # the service refuses live without it
+            try:
+                save(new)
+            except Exception:
+                delete_secret(LIVE_CONFIRM_VAR, rt.dotenv_path)  # never left set while config says paper
+                raise
+        else:
+            save(new)
         after = describe_mode(new.mode, new.dry_run)
         rt.journal.event("mode", f"{before} -> {after} (from the dashboard)",
                          "warning" if new.mode == "live" else "info")
         return status()
 
     @app.post("/api/pause", dependencies=[Depends(guard)])
-    def pause(body: PauseBody) -> dict[str, Any]:
+    def pause(body: PauseBody, request: Request) -> dict[str, Any]:
         """The kill switch: no new buys while paused. Sells and stop-losses keep working."""
+        if not body.paused and rt.settings.mode == "live" and not here(request):
+            raise HTTPException(403, "With real money, new buys are resumed on the Mac. Pausing works from anywhere.")
         path = kill_file(rt.settings)
         if body.paused:
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -803,7 +828,7 @@ def create_app(rt: Runtime, cache_ttl: float = 10.0, project: Path | None = None
         try:
             sold = sell(broker, symbol, pos, "sold by you from the dashboard")
         except Exception as e:  # noqa: BLE001 - shown to the user
-            raise HTTPException(502, f"Alpaca didn't accept the sell for {symbol}: {str(e)[:200]}") from None
+            raise HTTPException(502, redact(f"Alpaca didn't accept the sell for {symbol}: {str(e)[:200]}")) from None
         rt.journal.event("manual_sell", f"{symbol}: sell all {pos.qty:g} shares from the dashboard", "warning")
         cache.clear()
         return sold
@@ -864,12 +889,14 @@ def create_app(rt: Runtime, cache_ttl: float = 10.0, project: Path | None = None
         except llm.LLMError as e:
             raise HTTPException(422, str(e)) from None
         except Exception as e:  # noqa: BLE001 - e.g. no credentials found at all
-            raise HTTPException(422, f"{type(e).__name__}: {str(e)[:200]}") from None
+            raise HTTPException(422, redact(f"{type(e).__name__}: {str(e)[:200]}")) from None
         return {"ok": True, "model": d.model, "latency_ms": d.latency_ms, "summary": d.summary,
                 "input_tokens": d.input_tokens, "output_tokens": d.output_tokens}
 
     @app.post("/api/service", dependencies=[Depends(guard)])
-    def service(body: ServiceBody) -> dict[str, Any]:
+    def service(body: ServiceBody, request: Request) -> dict[str, Any]:
+        if body.action != "stop" and rt.settings.mode == "live" and not here(request):
+            raise HTTPException(403, "With real money, the bot is started on the Mac. Stopping works from anywhere.")
         if not launchd.supported():
             raise HTTPException(501, "Starting the background service from here works on macOS only. "
                                      "Run `taylortrader run` in a terminal instead.")
