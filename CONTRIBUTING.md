@@ -26,3 +26,11 @@ The dashboard is in `dashboard/` (`npm install`, then `npm run build`).
 By submitting a contribution, you confirm it's your own work, and you agree that it's licensed under
 this project's [license](LICENSE.md) and that the project's owner may also use, relicense and sell it
 as part of TaylorTrader, including in paid versions. You keep the copyright to your work.
+
+## Releasing (maintainer)
+1. Set the same new version in `pyproject.toml` and `src/taylortrader/__init__.py`, and commit.
+2. `git tag v0.1.0 && git push origin v0.1.0`
+
+The Release workflow builds the package with the dashboard inside, installs it fresh, runs the tests,
+publishes to PyPI and creates a GitHub Release. PyPI versions can't be reused, so a bad release gets
+a new version number. Publishing uses PyPI Trusted Publishing, so there's no token to store.

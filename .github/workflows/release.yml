@@ -1,0 +1,51 @@
+# Push a tag like v0.1.0 to publish. See CONTRIBUTING.md.
+name: Release
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: The tag matches the version in the code
+        run: |
+          want="${GITHUB_REF_NAME#v}"
+          grep -qx "version = \"$want\"" pyproject.toml
+          grep -qx "__version__ = \"$want\"" src/taylortrader/__init__.py
+
+  package:
+    needs: version
+    uses: ./.github/workflows/package.yml
+
+  pypi:
+    needs: package
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write  # Trusted Publishing: a short-lived login from GitHub, no stored token
+    steps:
+      - uses: astral-sh/setup-uv@v6
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - run: uv publish --trusted-publishing always
+
+  github-release:
+    needs: pypi
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - run: gh release create "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" --generate-notes
+        env:
+          GH_TOKEN: ${{ github.token }}

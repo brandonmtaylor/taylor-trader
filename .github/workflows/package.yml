@@ -1,0 +1,52 @@
+# Builds the package people install and tests it with the newest dependencies allowed, not uv.lock:
+# that's what a new user gets. Runs weekly so a breaking dependency update shows up here first.
+name: Package
+on:
+  schedule:
+    - cron: "17 13 * * 1"
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: dashboard/package-lock.json
+      - uses: astral-sh/setup-uv@v6
+      # Also fails if the dashboard is missing or a file that must never ship got in.
+      - run: bash scripts/build-release.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+          if-no-files-found: error
+
+  test:
+    needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, ubuntu-latest]
+        python: ["3.12", "3.14"]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - run: uv venv --python ${{ matrix.python }} fresh
+      - run: uv pip install --python fresh --only-binary ":all:" dist/*.whl pytest httpx
+      - name: Tests run against the installed package
+        run: |
+          fresh/bin/python -c "import taylortrader, sys; assert 'site-packages' in taylortrader.__file__, taylortrader.__file__"
+          fresh/bin/python -m pytest -q

@@ -18,18 +18,23 @@ classifiers = [
 dependencies = [
     # alpaca-py is pre-1.0 and changes often: pin exactly, upgrade on purpose.
     "alpaca-py==0.44.0",
-    "pandas>=2.2",
-    "numpy>=2.0",
+    "pandas>=2.2,<4",
+    "numpy>=2.0,<3",
+    # Only used through pandas, and has a new major version every few months: no cap, the weekly check covers it.
     "pyarrow>=17",
-    "pydantic>=2.7",
-    "fastapi>=0.115",
-    "uvicorn>=0.32",
+    "pydantic>=2.7,<3",
+    "fastapi>=0.115,<1",
+    "uvicorn>=0.32,<1",
     # Unofficial Yahoo Finance client, for feed = "yahoo". Breaks when Yahoo changes; pin and upgrade on purpose.
     "yfinance==1.7.0",
     "anthropic>=2.4,<3",
-    "openai>=1.50",
+    "openai>=1.50,<4",
     "mcp>=2.3,<3",
 ]
+
+[project.urls]
+Homepage = "https://github.com/brandonmtaylor/taylor-trader"
+Issues = "https://github.com/brandonmtaylor/taylor-trader/issues"
 
 [project.scripts]
 taylortrader = "taylortrader.cli:main"
