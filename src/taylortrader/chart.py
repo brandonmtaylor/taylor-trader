@@ -97,8 +97,10 @@ def build(symbol: str, period: str, df: pd.DataFrame, fills: list[Fill], strateg
             **t.as_dict(),
             "peak": peak,
             "peak_pct": (peak / t.entry - 1) * 100 if peak else None,
-            # Share of the best possible gain the sell kept. None if the price never rose above the buy.
-            "captured": ((t.exit - t.entry) / (peak - t.entry) * 100) if peak and peak > t.entry * 1.0005 else None,
+            # Share of the best possible gain the sell kept: 0 to 100, and 0 for a sale at a loss (a loss
+            # divided by a small gain made numbers like -1100%). None if the price never rose above the buy.
+            "captured": (max(0.0, (t.exit - t.entry) / (peak - t.entry) * 100)
+                         if peak and peak > t.entry * 1.0005 else None),
             "after_high": after_high,
             "after_pct": (after_high / t.exit - 1) * 100 if after_high else None,
             "after_complete": utc_ts(t.closed) + AFTER_SELL <= utc_ts(now),

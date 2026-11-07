@@ -370,7 +370,9 @@ export function TradeChart({
                     </td>
                     <td className={`num ${t.pct < 0 ? "is-down" : "is-up"}`}>{pct(t.pct, true, 1)}</td>
                     <td className="num">{t.peak_pct == null ? <span className="muted" title="Bought before this period; pick a longer range">—</span> : pct(t.peak_pct, true, 1)}</td>
-                    <td className="num">{t.captured == null ? "—" : `${Math.max(-999, Math.round(t.captured))}%`}</td>
+                    <td className="num">{t.captured == null ? "—" : t.pct < 0
+                      ? <span className="muted" title="Sold at a loss, so none of the best gain was kept">none</span>
+                      : `${Math.round(t.captured)}%`}</td>
                     <td className="num">
                       {t.after_pct == null ? "—" : <>up to {pct(t.after_pct, true, 1)}{!t.after_complete && <span className="muted"> so far</span>}</>}
                     </td>

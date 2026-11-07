@@ -161,6 +161,16 @@ def test_old_journal_gains_the_features_column(tmp_path):
     assert j.recent_ai(1)[0]["features"] == {"rsi": 40.0}
 
 
+def test_kept_is_zero_for_a_sale_at_a_loss():
+    # Like the real VRT trade: up 1.1% at best, sold 12.3% down. Was -1118%, shown as -999%.
+    df = hourly([100, 101, 95, 90, 88])
+    fills = [Fill(T0 + timedelta(minutes=5), "VRT", "buy", 1, 100.0, "b1"),
+             Fill(T0 + timedelta(hours=4, minutes=5), "VRT", "sell", 1, 87.7, "s1")]
+    out = chart.build("VRT", "1W", df, fills, {"b1": "macd_rsi"}, [], stop=None, held_qty=0,
+                      now=T0 + timedelta(hours=5))
+    assert out["trades"][0]["captured"] == 0
+
+
 def test_chart_points_carry_indicator_values():
     from taylortrader.indicators import add_all
 
