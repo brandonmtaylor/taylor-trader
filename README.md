@@ -122,10 +122,9 @@ bars, indicators, and optionally the last 3 days of news. It works with:
 The model only proposes. Position size, the stop-loss and every limit still apply, and an error, an
 off-menu answer or low confidence means hold. A daily call limit caps cost.
 
-In replay tests (about 500 past decisions, with the stocks disguised so the model couldn't recall what
-happened next), it didn't beat a simple rule. It can't be backtested honestly, so the backtester
-refuses it: try it in dry run, then on paper. `taylortrader replay` runs that disguised test on your
-own settings.
+It can't be backtested honestly, so the backtester refuses it: try it in dry run, then on paper.
+`taylortrader replay` tests it on past bars with each stock disguised, so the model can't recall what
+happened next.
 
 ## Long-term investing
 An **invest plan** puts a set amount into a fixed mix of funds on a schedule (say $200 a month into US
