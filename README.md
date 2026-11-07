@@ -2,7 +2,7 @@
 
 **Set your strategies once, and let the bot watch the market for you.** TaylorTrader runs on your own
 computer and trades your [Alpaca](https://alpaca.markets) account automatically: it checks prices all
-day, buys and sells when your strategies say so, protects every trade with a stop-loss, and tells you
+day, buys and sells when your strategies say so, protects those trades with stop-losses, and tells you
 what it did. Mix short-term trading strategies, an AI that makes the calls, and long-term investing on
 a schedule. No staring at charts.
 
