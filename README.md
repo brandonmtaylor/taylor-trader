@@ -1,11 +1,16 @@
 # TaylorTrader
 
-**Your own trading bot, running on your own computer.** Describe a strategy to Claude and it writes the
-rules, tests them and runs them. Let an AI model make the calls, or just invest on a schedule. Every
-trade the bot opens carries a stop-loss held at your broker, [Alpaca](https://alpaca.markets).
+**Set your strategies once, and let the bot watch the market for you.** TaylorTrader runs on your own
+computer and trades your [Alpaca](https://alpaca.markets) account automatically: it checks prices all
+day, buys and sells when your strategies say so, protects every trade with a stop-loss, and tells you
+what it did. Mix short-term trading strategies, an AI that makes the calls, and long-term investing on
+a schedule. No staring at charts.
 
 ![The TaylorTrader dashboard: account value, the bot's heartbeat, and growth of $100 against SPY](https://raw.githubusercontent.com/brandonmtaylor/taylor-trader/main/docs/images/overview.png)
 
+- **Runs on its own.** Once it's set up, it trades and invests by itself during market hours, checks
+  that every position is protected, and sends you a summary after each close. You step in only when
+  you want to.
 - **Talk to it from Claude.** Describe an idea in plain English and Claude turns it into rules,
   backtests them against buying and holding, and adds the strategy when you say so. Ask how it's
   doing, pause it, or move a stock to another strategy, all in conversation.
