@@ -13,12 +13,6 @@ safety-first. It runs on your own computer, with a local dashboard, phone alerts
 **Status:** early, and in a paper-trading trial. See the
 [plan](https://github.com/brandonmtaylor/taylor-trader/blob/main/docs/PLAN.md).
 
-**What testing found, honestly:** on the 30 Dow stocks and 9 sector funds over several years, none of
-the built-in strategies beat buying and holding once tested on data they hadn't seen. Some had
-smaller drops along the way. They're here to experiment with and build on, and the tools to test an
-idea properly (held-back data, plus a check against random entries) are included. If you mainly want
-to invest steadily, use the invest plan.
-
 ## What it does
 
 **Trades on rules you can read.** Pick a built-in strategy, write your own in plain rules
@@ -104,7 +98,7 @@ home network you trust; for anywhere else, put the Mac and phone on [Tailscale](
 
 ## Strategies
 Built-ins: `macd_rsi`, `macd`, `ma_20`, `rsi_14`, `ma_20_rsi`, `ma_200_rsi`, `ma_20_over_200_rsi`,
-`chaikin`, `pullback`, ported from the author's earlier bot. Each symbol belongs to one strategy, so
+`chaikin`, `pullback`. Each symbol belongs to one strategy, so
 it's always clear who manages a position.
 
 Or write your own with `rule`: a buy rule and a sell rule, like `close > ma_50 and rsi < 40` or
