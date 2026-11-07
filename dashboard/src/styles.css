@@ -436,6 +436,8 @@ select.input { width: 100%; }
 .grid-fields .field + .field { margin-top: 0; }
 .field__label { font-size: 13px; font-weight: 600; color: var(--ink); }
 .field__hint { margin: 0; font-size: 12.5px; color: var(--ink-3); }
+.field__hint > span { display: block; }
+.field__warn { margin-top: 2px; color: var(--warn); font-weight: 600; }
 .grid-fields { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 16px 20px; }
 
 .toggle { display: inline-flex; align-items: center; gap: 9px; cursor: pointer; font-size: 14px; }

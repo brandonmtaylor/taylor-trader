@@ -4,6 +4,7 @@ import { day, pct } from "../format";
 import { useChartWidth } from "../useChartWidth";
 import { AIFields } from "./AIFields";
 import { Labeled, NoticeLine, NumberInput, Toggle, useAction } from "./forms";
+import { AdviceHint, STRATEGY_ADVICE } from "../advice";
 
 const TF_LABEL: Record<string, string> = {
   "1Min": "1 minute", "5Min": "5 minutes", "15Min": "15 minutes", "1Hour": "1 hour", "1Day": "1 day",
@@ -81,10 +82,16 @@ export function StrategyEditor({ value, onChange, onRemove, catalog, limits, tim
             {timeframes.map((t) => <option key={t} value={t}>{TF_LABEL[t] ?? t}</option>)}
           </select>
         )} />
-        <Labeled label="Position size" hint={`% of your account per buy · max ${limits.max_position_pct}%`} render={(id) => (
+        <Labeled label="Position size" hint={<>
+          <span>% of your account per buy · max {limits.max_position_pct}%</span>
+          <AdviceHint advice={STRATEGY_ADVICE.allocation_pct} value={value.allocation_pct} />
+        </>} render={(id) => (
           <NumberInput id={id} value={value.allocation_pct} suffix="%" onChange={(allocation_pct) => set({ allocation_pct })} />
         )} />
-        <Labeled label="Stop-loss" hint={`Sell if it falls this far · max ${limits.max_stop_loss_pct}%`} render={(id) => (
+        <Labeled label="Stop-loss" hint={<>
+          <span>Sell if it falls this far · max {limits.max_stop_loss_pct}%</span>
+          <AdviceHint advice={STRATEGY_ADVICE.stop_loss_pct} value={value.stop_loss_pct} />
+        </>} render={(id) => (
           <NumberInput id={id} value={value.stop_loss_pct} suffix="%" onChange={(stop_loss_pct) => set({ stop_loss_pct })} />
         )} />
         <Labeled label="Take-profit" hint="Sell once up this much · 0 = off" render={(id) => (

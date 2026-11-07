@@ -2,6 +2,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { send, type ConfigDict, type Setup } from "../api";
 import { AlpacaKeys } from "../components/Keys";
 import { Labeled, NoticeLine, NumberInput, SecretField, Toggle, useAction } from "../components/forms";
+import { AdviceHint, LIMIT_ADVICE } from "../advice";
 import { clone, same, type SettingsStore } from "../settings";
 
 type SectionKey = "guardrails" | "alerts" | "service" | "feed" | "ai" | "mcp";
@@ -63,7 +64,10 @@ export function LimitsSection({ store, step, done, saveLabel }: { store: Setting
   if (!s.draft || !hard) return null;
   const d = s.draft;
   const row = (k: keyof typeof d, label: string, hint: string, suffix?: string) => (
-    <Labeled label={label} hint={`${hint} · ceiling ${hard[k]}${suffix ?? ""}`} render={(id) => (
+    <Labeled label={label} hint={<>
+      <span>{hint}</span>
+      <AdviceHint advice={LIMIT_ADVICE[k]} value={d[k]} suffix={suffix ?? ""} extra={` · ceiling ${hard[k]}${suffix ?? ""}`} />
+    </>} render={(id) => (
       <NumberInput id={id} value={d[k]} suffix={suffix} onChange={(v) => s.setDraft({ ...d, [k]: v })} />
     )} />
   );
@@ -158,8 +162,7 @@ function ClaudeSection({ store }: { store: SettingsStore }) {
       </div>
       <p className="field__hint">
         Off: Claude can sell on paper only; on real money you sell here. Claude types its own confirmations, so a
-        misleading news story or message it reads could get it to sell. Turn this on only if you want that.
-        Changed on the Mac only.
+        misleading news story or message it reads could get it to sell. Recommended: off. Changed on the Mac only.
       </p>
       <SaveRow dirty={s.dirty} busy={s.act.busy} onSave={() => s.save("Saved.")} onReset={s.reset} />
       <NoticeLine notice={s.act.notice} />
@@ -241,9 +244,12 @@ function ServiceSection({ store, setup, onSetup }: { store: SettingsStore; setup
       </div>
       <div className="toggles">
         <Toggle checked={d.auto_protect} onChange={(auto_protect) => s.setDraft({ ...d, auto_protect })}
-          label="Put back a missing stop-loss on positions a strategy owns" />
+          label="Put back a missing stop-loss on positions a strategy owns (recommended)" />
+        {!d.auto_protect && <p className="field__hint"><span className="field__warn" role="status">Off: if a stop-loss
+          disappears (Alpaca cancels them after 90 days, or one is cancelled by hand), the bot alerts you but leaves
+          the position unprotected until you fix it.</span></p>}
         <Toggle checked={d.daily_summary} onChange={(daily_summary) => s.setDraft({ ...d, daily_summary })}
-          label="Send a summary after each market close" />
+          label="Send a summary after each market close (recommended)" />
       </div>
       <SaveRow dirty={s.dirty} busy={s.act.busy} onSave={() => s.save("Saved.")} onReset={s.reset} />
       <NoticeLine notice={s.act.notice} />
