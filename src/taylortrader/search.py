@@ -54,6 +54,14 @@ RULES = (
     ("close > ma_200 and rsi < 40", "rsi > 65"),                         # dip in a long uptrend
     ("close > ma_200 and macd_diff > 0 and prev_macd_diff <= 0", "macd_diff < 0"),  # momentum turn in uptrend
 )
+# Machine learning: a few fixed settings (how far ahead it predicts, how sure it must be), not tuned.
+ML = (
+    {"horizon": 5, "buy_above": 0.55},
+    {"horizon": 5, "buy_above": 0.60},
+    {"horizon": 20, "buy_above": 0.55},
+    {"horizon": 20, "buy_above": 0.60},
+)
+GRIDS = ("standard", "ml", "all")
 STOPS = (8.0, 12.0)
 CASH_YIELD = 4.0      # % a year on uninvested cash (roughly T-bills / money market in 2024-26)
 MIN_TRADES = 10       # across all symbols in the search period; fewer is too few to judge
@@ -70,12 +78,23 @@ class Candidate:
     def label(self) -> str:
         if self.strategy == "rule":
             return f"rule: buy {self.params['buy_when']} / sell {self.params['sell_when']} · stop {self.stop_pct:g}%"
+        if self.strategy == "ml":
+            p = self.params
+            return f"ml: {p['horizon']} bars ahead, buy at {p['buy_above']:.0%} · stop {self.stop_pct:g}%"
         return f"{self.strategy} · stop {self.stop_pct:g}%"
 
 
-def default_grid(stops=STOPS) -> list[Candidate]:
-    grid = [Candidate(name, {}, s) for name in BUILTINS for s in stops]
-    grid += [Candidate("rule", {"buy_when": b, "sell_when": x}, s) for b, x in RULES for s in stops]
+def default_grid(stops=STOPS, kind: str = "standard") -> list[Candidate]:
+    """standard: the built-ins and rules. ml: machine learning only. all: both (more tries, so the
+    best of them is more likely to be luck; the holdout and luck test still decide)."""
+    if kind not in GRIDS:
+        raise ValueError(f"grid must be one of {GRIDS}")
+    grid = []
+    if kind in ("standard", "all"):
+        grid += [Candidate(name, {}, s) for name in BUILTINS for s in stops]
+        grid += [Candidate("rule", {"buy_when": b, "sell_when": x}, s) for b, x in RULES for s in stops]
+    if kind in ("ml", "all"):
+        grid += [Candidate("ml", dict(p), s) for p in ML for s in stops]
     return grid
 
 

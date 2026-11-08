@@ -21,13 +21,16 @@ def get_strategy(name: str, params: dict[str, Any] | None = None) -> Strategy:
     return _REGISTRY[name](params)
 
 
-def list_strategies() -> list[dict[str, Any]]:
+def list_strategies(include_research: bool = False) -> list[dict[str, Any]]:
+    """Strategies people can trade with; research-only ones (like ml) only when asked for."""
     return [
         {
             "name": cls.name,
             "description": cls.description,
             "backtestable": cls.backtestable,
+            "research_only": cls.research_only,
             "params": {f.name: f.default for f in fields(cls.Params)},
         }
         for cls in sorted(_REGISTRY.values(), key=lambda c: c.name)
+        if include_research or not cls.research_only
     ]

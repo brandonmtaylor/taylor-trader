@@ -155,6 +155,11 @@ Rules are parsed, never run as code.
 `taylortrader search` goes further: it tunes on older data, then tests once on held-back data, and
 checks the result against random entries, so luck doesn't pass for skill.
 
+**Machine learning, for research.** `taylortrader search --grid ml` puts a machine-learning strategy
+through the same tests. A tree model is retrained as time moves forward, only ever on bars whose
+outcome was already known, and buys when it thinks a rise is likely. It's research-only, so it can't
+be picked for trading. It needs an extra: `uv tool install 'taylortrader[ml]'`.
+
 ## Long-term investing
 An **invest plan** puts a set amount into a fixed mix of funds on a schedule (say $200 a month into US
 stocks, international stocks and bonds) and holds it.

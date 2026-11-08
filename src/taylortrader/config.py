@@ -219,9 +219,11 @@ def _parse_config(raw: dict[str, Any]) -> Config:
         if sc.take_profit_pct < 0:
             raise ConfigError(f"{label}: take-profit can't be negative (0 turns it off)")
         try:
-            get_strategy(sc.name, sc.params)  # validates name and params now, not at 9:30am
+            strat = get_strategy(sc.name, sc.params)  # validates name and params now, not at 9:30am
         except ValueError as e:
             raise ConfigError(f"{label}: {e}") from None
+        if strat.research_only:
+            raise ConfigError(f"{label}: {sc.name} is for research only (taylortrader search), not trading")
         strategies.append(sc)
 
     owners: dict[str, str] = {}

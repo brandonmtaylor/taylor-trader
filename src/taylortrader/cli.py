@@ -48,7 +48,7 @@ def _parse_params(items: list[str]) -> dict:
 
 
 def cmd_strategies(args) -> int:
-    for s in list_strategies():
+    for s in list_strategies(include_research=True):
         print(f"\n{s['name']}\n  {s['description']}")
         if s["params"]:
             print("  params: " + ", ".join(f"{k}={v}" for k, v in s["params"].items()))
@@ -276,7 +276,14 @@ def cmd_search(args) -> int:
     if not frames:
         print("error: no symbol had enough history", file=sys.stderr)
         return 2
-    grid = search.default_grid(stops)
+    grid = search.default_grid(stops, args.grid)
+    if args.grid != "standard":
+        try:
+            import sklearn  # noqa: F401
+        except ImportError:
+            print("error: --grid ml needs scikit-learn: uv tool install 'taylortrader[ml]' "
+                  "(from source: uv sync --extra ml)", file=sys.stderr)
+            return 2
     print(f"{', '.join(frames)} {args.timeframe}, last {args.days} days. Trying {len(grid)} candidates on the "
           f"older {100 - args.holdout:g}%, then the winner once on the newest {args.holdout:g}%.")
 
@@ -286,7 +293,7 @@ def cmd_search(args) -> int:
     rep = search.run_search(frames, grid, holdout=args.holdout / 100, seeds=args.seeds,
                             log_path=cfg.data_dir / "search" / "holdout-looks.jsonl", on_progress=progress)
     print()
-    tag = args.universe or "-".join(frames)[:40]
+    tag = (args.universe or "-".join(frames)[:40]) + ("" if args.grid == "standard" else f"-{args.grid}")
     out = cfg.data_dir / "search" / f"search-{tag}-{args.timeframe}-{datetime.now(UTC):%Y%m%d-%H%M%S}.json"
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(rep, default=str, indent=1))
@@ -593,6 +600,8 @@ def main(argv: list[str] | None = None) -> int:
     se.add_argument("--seeds", type=int, default=100, help="random-entry runs for the luck test")
     se.add_argument("--feed", choices=["iex", "sip"])
     se.add_argument("--top", type=int, default=12, help="rows to print")
+    se.add_argument("--grid", choices=["standard", "ml", "all"], default="standard",
+                    help="standard: built-in strategies and rules; ml: machine learning (needs taylortrader[ml]); all: both")
     se.set_defaults(fn=cmd_search)
     rp = sub.add_parser("replay", help="ask the AI about past bars (disguised) and grade it")
     rp.add_argument("symbols", nargs="*", help="default: the AI strategy's symbols")

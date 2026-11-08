@@ -57,6 +57,7 @@ class Strategy(ABC):
     name: ClassVar[str]
     description: ClassVar[str]
     backtestable: ClassVar[bool] = True  # False when replaying history would be dishonest (AI)
+    research_only: ClassVar[bool] = False  # True: search and backtests only, never in a trading config
     Params: ClassVar[type]  # a dataclass of tunable parameters with defaults
 
     def __init__(self, params: dict[str, Any] | None = None):
