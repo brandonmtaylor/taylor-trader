@@ -105,6 +105,8 @@ adjust it: "how did the AI strategy do this week?", "move PLTR to macd_rsi", "ba
 hourly", or describe an idea and let Claude write the rules and test it. It's optional; the bot runs
 the same without it.
 
+![Claude asks TaylorTrader how the week went and whether a guardrail stopped a trade, calls five read-only tools, and reports one closed trade, one open position and a buy the total-exposure limit blocked (made-up paper account)](https://raw.githubusercontent.com/brandonmtaylor/taylor-trader/main/docs/images/claude-weekly.gif)
+
 - **Claude Code:** [install it](https://claude.com/claude-code), then run once:
   ```bash
   claude mcp add taylortrader --scope user -- taylortrader mcp
