@@ -62,6 +62,7 @@ def round_trips(fills: list[Fill], strategy_of: dict[str, str]) -> list[Trade]:
     """Pair fills into closed trades, oldest first. `strategy_of` maps a buy's order id to its strategy."""
     lots: dict[str, deque] = defaultdict(deque)  # symbol -> [qty, price, ts, strategy]
     trades: list[Trade] = []
+    sold_by: list[str] = []  # the sell order that closed each trade, so one order's partial fills stay one trade
     for f in sorted(fills, key=lambda f: f.ts):
         if f.side == "buy":
             lots[f.symbol].append([f.qty, f.price, f.ts, strategy_of.get(f.order_id)])
@@ -71,10 +72,15 @@ def round_trips(fills: list[Fill], strategy_of: dict[str, str]) -> list[Trade]:
             lot = lots[f.symbol][0]
             take = min(left, lot[0])
             last = trades[-1] if trades else None
-            if last and last.symbol == f.symbol and last.closed == f.ts and last.opened == lot[2]:
-                last.qty += take  # same buy closed by the same sell: one trade, not fragments
+            same_sell = last and (last.closed == f.ts or (f.order_id and sold_by[-1] == f.order_id))
+            if last and last.symbol == f.symbol and last.opened == lot[2] and same_sell:
+                # same buy closed by the same sell (one order may fill in pieces): one trade, not fragments
+                last.exit = (last.exit * last.qty + f.price * take) / (last.qty + take)
+                last.qty += take
+                last.closed = max(last.closed, f.ts)
             else:
                 trades.append(Trade(f.symbol, lot[3], take, lot[1], f.price, lot[2], f.ts))
+                sold_by.append(f.order_id)
             lot[0] -= take
             left -= take
             if lot[0] <= EPS:
@@ -136,4 +142,6 @@ def results(fills: list[Fill], strategy_of: dict[str, str], now: datetime) -> di
                         for k, s in summaries.items()],
         "recent": [t.as_dict() for t in reversed(bot[-10:])],
         "other": {"trades": len(other), "realized": sum(t.pnl for t in other)},
+        # Every trade closed today, the bot's and the rest (strategy None), in the order they closed.
+        "closed_today": [t.as_dict() for t in trades if t.closed.astimezone(NY).date() == today],
     }

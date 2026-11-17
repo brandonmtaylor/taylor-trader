@@ -546,12 +546,15 @@ class Service:
         orders = [dict(o) for o in self.journal.orders_since(start.isoformat())]
         problems = [dict(e) for e in self.journal.events_since(start.isoformat()) if e["level"] in ("error", "warning")]
         stops = self.broker.symbols_with_stop()
-        closed = None
+        closed, closed_trades, filled = None, [], None
         try:  # trades closed today, from Alpaca's fills (includes stop-loss fills)
             fills = self.broker.fills(days=60)
             strategy_of = {r["broker_order_id"]: r["strategy"] for r in self.journal.db.execute(
                 "SELECT broker_order_id, strategy FROM orders WHERE side='buy' AND broker_order_id IS NOT NULL")}
-            closed = stats.results(fills, strategy_of, self.now())["bot"]["today"]
+            res = stats.results(fills, strategy_of, self.now())
+            closed, closed_trades = res["bot"]["today"], res["closed_today"]
+            todays = {(f.side, f.order_id) for f in fills if stats.utc_ts(f.ts).astimezone(NY).date() == today}
+            filled = {side: sum(1 for x in todays if x[0] == side) for side in ("buy", "sell")}
         except Exception as e:  # noqa: BLE001  the summary goes out without it
             log.warning("results for the summary unavailable: %s", e)
         plan = set(self.cfg.invest.symbols)
@@ -561,7 +564,9 @@ class Service:
                      for p in sorted(snap.positions.values(), key=lambda p: -abs(p.market_value))]
         return report.Summary(day=today, mode="DRY RUN" if self.dry_run else self.broker.mode.upper(),
                               equity=snap.equity, day_pnl_pct=snap.day_pnl_pct, cash=snap.cash, kill_on=self.kill_on,
+                              day_pnl=snap.equity - snap.day_start_equity if snap.day_start_equity > 0 else None,
                               positions=positions, orders=orders, problems=problems, closed=closed,
+                              closed_trades=closed_trades, filled=filled,
                               loss_limit_pct=self.cfg.limits.max_daily_loss_pct,
                               notes=[n for n in [self.invest.summary_line(snap)] if n])
 

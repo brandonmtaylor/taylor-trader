@@ -46,6 +46,9 @@ class Summary:
     closed: dict | None = None    # stats.summarize()["today"], when available
     notes: list[str] = field(default_factory=list)
     loss_limit_pct: float | None = None  # the daily loss guardrail, to say when it blocked buys today
+    day_pnl: float | None = None  # dollars, equity now minus at the start of the day (money moved in/out excluded)
+    closed_trades: list[dict] = field(default_factory=list)  # stats.Trade.as_dict() for trades closed today
+    filled: dict | None = None  # {"buy": n, "sell": n} orders filled today at Alpaca (stop-losses included)
 
     @property
     def loss_limit_hit(self) -> bool:
@@ -93,6 +96,45 @@ def _gain_pct(p: PositionLine) -> float | None:
     return (p.value / p.qty / p.avg - 1) * 100
 
 
+def _today_words(s: Summary) -> str:
+    """'+$12.34 (+1.20%) today', or just the percent when the dollar figure isn't known."""
+    if s.day_pnl is None:
+        return f"{s.day_pnl_pct:+.2f}% today"
+    return f"{_signed_money(s.day_pnl)} ({s.day_pnl_pct:+.2f}%) today"
+
+
+def _held(t: dict) -> str:
+    try:
+        mins = (datetime.fromisoformat(t["closed"]) - datetime.fromisoformat(t["opened"])).total_seconds() / 60
+    except (KeyError, TypeError, ValueError):
+        return ""
+    if mins < 60:
+        return f"{mins:.0f} min"
+    if mins < 60 * 24:
+        return f"{mins / 60:.1f} h"
+    return f"{mins / 1440:.0f} d"
+
+
+def _trade_who(t: dict) -> str:
+    return t.get("strategy") or "not the bot's"
+
+
+def _trades_line(s: Summary) -> str:
+    """One line on today's activity: orders filled, trades closed, money made or lost on them."""
+    bits = []
+    if s.filled is not None:
+        b, sl = s.filled.get("buy", 0), s.filled.get("sell", 0)
+        bits.append(f"{b} buy{'' if b == 1 else 's'} and {sl} sell{'' if sl == 1 else 's'} filled")
+    n = len(s.closed_trades)
+    if n:
+        won = sum(1 for t in s.closed_trades if t["pnl"] > 0)
+        bits.append(f"{n} trade{'' if n == 1 else 's'} closed, {won} won, "
+                    f"{_signed_money(sum(t['pnl'] for t in s.closed_trades))} realized")
+    elif s.filled is not None:
+        bits.append("no trades closed")
+    return " · ".join(bits)
+
+
 def _order_why(o: dict) -> str:
     why = o.get("reason") or ""
     if o.get("detail"):
@@ -105,14 +147,19 @@ def _order_why(o: dict) -> str:
 def text(s: Summary) -> str:
     invested = sum(p.value for p in s.positions)
     lines = [
-        (f"[{s.mode}] Equity {_money(s.equity)} ({s.day_pnl_pct:+.2f}% today), cash {_money(s.cash)}, "
+        (f"[{s.mode}] Equity {_money(s.equity)}, {_today_words(s)}, cash {_money(s.cash)}, "
          f"invested {invested / s.equity * 100 if s.equity else 0:.0f}%"),
         (f"New buys: {buys_status(s)[1]}. Orders today: {len(s.orders)}. "
          f"Problems today: {len(s.problems)}."),
     ]
-    if s.closed and s.closed.get("trades"):
+    if s.closed and s.closed.get("trades") and not s.closed_trades:  # the trades line below says it otherwise
         lines.append(f"Closed today: {s.closed['trades']} trade(s), {s.closed['wins']} won, "
                      f"{_signed_money(s.closed['realized'])}.")
+    if _trades_line(s):
+        lines += ["", f"Today's trades: {_trades_line(s)}."]
+    for t in s.closed_trades:
+        lines.append(f"  {t['symbol']}: {qty_text(t['qty'])} sh, ${t['entry']:,.2f} -> ${t['exit']:,.2f}, "
+                     f"{_signed_money(t['pnl'])} ({t['pct']:+.1f}%), held {_held(t)}, {_trade_who(t)}")
     lines += ["", "Positions:" if s.positions else "Positions: none"]
     for p in s.positions:
         g = _gain_pct(p)
@@ -167,7 +214,7 @@ def html(s: Summary) -> str:
         f'<td align="right">{_chip(s.mode, mode_color)}</td></tr></table>'
         f'<div style="font-size:13px;color:{INK3};margin-top:14px">{escape(day)} · after the close</div>'
         f'<div style="font-size:34px;font-weight:700;color:{INK};letter-spacing:-.02em;margin-top:2px">{_money(s.equity)}</div>'
-        f'<div style="font-size:15px;font-weight:600;color:{pnl_color}">{arrow}{s.day_pnl_pct:+.2f}% today</div>'
+        f'<div style="font-size:15px;font-weight:600;color:{pnl_color}">{arrow}{escape(_today_words(s))}</div>'
         f'</td></tr>'
     )]
 
@@ -190,6 +237,21 @@ def html(s: Summary) -> str:
         f'<tr>{spacer.join(p) if len(p) == 2 else p[0] + spacer + "<td></td>"}</tr>' for p in pairs)
     rows.append(f'<tr><td style="padding:18px 24px 0"><table role="presentation" width="100%" cellpadding="0" '
                 f'cellspacing="0" style="table-layout:fixed">{grid}</table></td></tr>')
+
+    # today's trades: what was bought and sold, and what each closed trade made or lost
+    if _trades_line(s):
+        body = f'<div style="font-size:13.5px;color:{INK2};margin-bottom:6px">{escape(_trades_line(s))}</div>'
+        if s.closed_trades:
+            body += '<table role="presentation" width="100%" cellpadding="0" cellspacing="0">'
+            for t in s.closed_trades:
+                col = UP if t["pnl"] > 0 else DOWN if t["pnl"] < 0 else INK
+                body += (f'<tr><td style="{td}"><b>{escape(t["symbol"])}</b>'
+                         f'<div style="font-size:12px;color:{INK3}">{qty_text(t["qty"])} sh · '
+                         f'${t["entry"]:,.2f} → ${t["exit"]:,.2f} · held {_held(t)} · {escape(_trade_who(t))}</div></td>'
+                         f'<td style="{td};text-align:right;color:{col};white-space:nowrap"><b>{_signed_money(t["pnl"])}</b>'
+                         f'<div style="font-size:12px">{t["pct"]:+.1f}%</div></td></tr>')
+            body += "</table>"
+        rows.append(_section("Today's trades", body))
 
     # positions
     if s.positions:

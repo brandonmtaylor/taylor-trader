@@ -14,9 +14,9 @@ def f(h, sym, side, qty, px, oid="x"):
 def test_fifo_pairing_partial_sells_and_streaks():
     fills = [
         f(0, "A", "buy", 10, 10.0, "b1"), f(1, "A", "buy", 10, 12.0, "b2"),
-        f(2, "A", "sell", 15, 11.0),       # 10 from b1 (+$10), 5 from b2 (-$5)
-        f(3, "A", "sell", 5, 13.0),        # rest of b2 (+$5)
-        f(4, "B", "buy", 4, 50.0, "b3"), f(5, "B", "sell", 4, 40.0),  # -$40
+        f(2, "A", "sell", 15, 11.0, "s1"),       # 10 from b1 (+$10), 5 from b2 (-$5)
+        f(3, "A", "sell", 5, 13.0, "s2"),        # rest of b2 (+$5)
+        f(4, "B", "buy", 4, 50.0, "b3"), f(5, "B", "sell", 4, 40.0, "s3"),  # -$40
         f(6, "C", "buy", 1, 10.0, "b4"),   # still open: not a trade
     ]
     trades = round_trips(fills, {"b1": "s", "b2": "s", "b3": "s"})
@@ -26,6 +26,12 @@ def test_fifo_pairing_partial_sells_and_streaks():
     assert s["profit_factor"] == pytest.approx(15 / 45)
     assert s["last"] == ["W", "L", "W", "L"] and s["streak"] == {"kind": "L", "n": 1}
     assert s["today"]["trades"] == 4  # T is 10am New York on the same day
+
+
+def test_one_sell_order_filled_in_pieces_is_one_trade():
+    fills = [f(0, "A", "buy", 10, 10.0, "b1"), f(1, "A", "sell", 4, 11.0, "s1"), f(2, "A", "sell", 6, 12.0, "s1")]
+    (t,) = round_trips(fills, {"b1": "s"})
+    assert t.qty == 10 and t.exit == pytest.approx(11.6) and t.pnl == pytest.approx(16) and t.closed == T + timedelta(hours=2)
 
 
 def test_empty():

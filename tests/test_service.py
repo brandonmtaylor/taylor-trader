@@ -885,3 +885,33 @@ def test_an_order_alpaca_took_despite_an_error_is_recorded(svc):
     row = svc.journal.db.execute("SELECT status, broker_order_id FROM orders").fetchone()
     assert (row["status"], row["broker_order_id"]) == ("submitted", "o-late")
     assert "VRT" in svc.executor.inflight
+
+
+def test_daily_summary_lists_todays_trades_and_dollars(svc):
+    from taylortrader import report
+    from taylortrader.stats import Fill
+
+    y = NOW - timedelta(days=1)
+    svc.broker.fills = lambda days=365: [
+        Fill(y, "VRT", "buy", 4.0, 200.0, "b1"), Fill(NOW, "VRT", "sell", 4.0, 190.0, "s1"),           # opened yesterday
+        Fill(NOW - timedelta(hours=3), "AMD", "buy", 2.0, 100.0, "b2"),
+        Fill(NOW - timedelta(hours=1), "AMD", "sell", 1.0, 110.0, "s2"),
+        Fill(NOW - timedelta(minutes=59), "AMD", "sell", 1.0, 110.0, "s2")]                          # one order, two fills
+    snap = dataclasses.replace(svc.broker.snapshot(), equity=10_123.45)
+    s = svc.daily_summary(snap)
+    assert s.filled == {"buy": 1, "sell": 2}
+    assert [(t["symbol"], t["qty"]) for t in s.closed_trades] == [("AMD", 2.0), ("VRT", 4.0)]  # pieces merged
+    text, page = report.text(s), report.html(s)
+    assert "+$123.45 (+1.23%) today" in text and "+$123.45 (+1.23%) today" in page
+    assert "1 buy and 2 sells filled · 2 trades closed, 1 won, -$20.00 realized" in text
+    assert "VRT: 4 sh, $200.00 -> $190.00, -$40.00 (-5.0%), held 1 d, not the bot's" in text
+    assert "Today&#x27;s trades" in page and "AMD" in page and "+10.0%" in page
+
+
+def test_daily_summary_with_no_fills_says_so(svc):
+    from taylortrader import report
+
+    svc.broker.fills = lambda days=365: []
+    s = svc.daily_summary(svc.broker.snapshot())
+    assert "Today's trades: 0 buys and 0 sells filled · no trades closed." in report.text(s)
+    assert "+$0.00" not in report.text(s) and "$0.00 (+0.00%) today" in report.text(s)
