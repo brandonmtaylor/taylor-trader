@@ -205,3 +205,35 @@ def test_pinned_github_actions_arent_secrets():
     assert scan_text(f"      - uses: actions/checkout@{sha} # v4.4.0\n") == []
     assert scan_text(f"token: {'A' * 8}{sha}\n") or scan_text(f"secret = \"{'Zz9' * 13}x\"\n")
 
+
+
+def test_personal_details_are_caught_and_placeholders_are_not():
+    from pathlib import Path as P
+
+    from taylortrader.secretscan import path_findings, scan_message
+
+    words = {"jane-private-project"}
+    hits = scan_text("see Jane-Private-Project notes  # secretscan: allow", words=words)
+    assert hits == [(1, "private word")]  # a private word can't be waved through
+    assert scan_text("open /Users/jdoe/Projects/x") == [(1, "home folder path")]  # secretscan: allow (fake)
+    assert scan_text("path /Users/you/Projects/x or /home/runner/work") == []
+    assert scan_text('email_to = ["jane.doe@gmail.com"]') == [(1, "email address")]  # secretscan: allow (fake)
+    assert scan_text('# email_to = ["you@gmail.com"], a@example.com, b@site.test, 1+x@users.noreply.github.com') == []
+    assert scan_text("decorated @mcp.tool(annotations=READ)") == []
+    assert path_findings(P("config.toml")) and path_findings(P("var/journal.db")) and path_findings(P("config.toml.bak"))
+    assert path_findings(P("dashboard/shot.png")) and not path_findings(P("docs/images/overview.png"))
+    assert not path_findings(P("config.example.toml"))
+    msg = "Fix sells\n\n# Please enter the commit message (jane-private-project in a git comment is ignored)\n"
+    assert scan_message(msg, known=set(), words=words) == []
+    assert scan_message("Port the jane-private-project idea", known=set(), words=words) == [(1, "private word")]
+
+
+def test_private_words_file_lives_outside_the_repo(tmp_path, monkeypatch):
+    from taylortrader.secretscan import private_words
+
+    f = tmp_path / "words.txt"
+    f.write_text("# comment\nAcme-Secret\n\nab\n")
+    monkeypatch.setenv("TAYLORTRADER_PRIVATE_WORDS", str(f))
+    assert private_words() == {"acme-secret"}  # comments, blanks and too-short entries dropped
+    monkeypatch.setenv("TAYLORTRADER_PRIVATE_WORDS", str(tmp_path / "missing.txt"))
+    assert private_words() == set()

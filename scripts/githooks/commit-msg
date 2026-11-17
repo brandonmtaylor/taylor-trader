@@ -1,0 +1,4 @@
+#!/bin/sh
+# Blocks commit messages that contain a credential or a personal detail (see taylortrader.secretscan).
+# Enable once per clone:  git config core.hooksPath scripts/githooks
+exec uv run --quiet python -m taylortrader.secretscan --message "$1"

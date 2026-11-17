@@ -7,7 +7,7 @@ the approach before you spend time on it.
 
 ```sh
 uv sync
-git config core.hooksPath scripts/githooks   # scans each commit for secrets
+git config core.hooksPath scripts/githooks   # scans each commit and its message for secrets and personal details
 uv run pytest -q
 uv run ruff check src tests
 ```

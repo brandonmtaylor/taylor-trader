@@ -468,7 +468,7 @@ def test_settings_change_restarts_bad_file_is_ignored(svc, tmp_path):
 def test_config_writer_round_trips_awkward_values(tmp_path):
     from taylortrader.config import AlertsConfig, load_config, save_config
 
-    cfg = Config(data_dir=tmp_path, alerts=AlertsConfig(email_from='a"b\\c@x.com', email_to=["x@y.z"]),
+    cfg = Config(data_dir=tmp_path, alerts=AlertsConfig(email_from='a"b\\c@example.com', email_to=["x@y.z"]),
                  strategies=[StrategyConfig(name="macd_rsi", symbols=["BRK.B"], params={"rsi_buy": 30.5})])
     save_config(cfg, tmp_path / "c.toml")
     assert load_config(tmp_path / "c.toml") == cfg
