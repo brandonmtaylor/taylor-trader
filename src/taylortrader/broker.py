@@ -37,8 +37,14 @@ CASH_FLOWS = "CSD,CSW,JNLC,ACATC"
 CASH_FLOW_TTL_S = 300
 
 _STOP_TYPES = {OrderType.STOP, OrderType.STOP_LIMIT, OrderType.TRAILING_STOP}
+CANCEL_WAIT = 20.0  # seconds to wait for a cancelled stop to release its shares
 TRADES_PAGE = 500  # Alpaca's largest page of orders
 _NO_FILL = {"canceled", "expired", "rejected"}
+
+
+def _shares_held(e: Exception) -> bool:
+    """Alpaca's refusal when the shares are still reserved by another order (code 40310000)."""
+    return "40310000" in str(e) or "held_for_orders" in str(e)
 
 
 def is_strategy_buy(o) -> bool:
@@ -315,12 +321,19 @@ class AlpacaBroker:
                 except Exception as e:  # noqa: BLE001  leg may already be gone; never block an exit
                     log.warning("cancel %s order %s failed: %s", symbol, o.id, e)
         # Cancels are asynchronous: wait until the stop releases the shares, or the close is refused.
-        deadline = time.monotonic() + 5.0
-        while any(o.symbol == symbol for o in self.open_orders()) and time.monotonic() < deadline:
-            time.sleep(0.25)
+        # Near the open Alpaca can take several seconds to confirm a cancel, so wait up to CANCEL_WAIT.
+        self._wait_released(symbol, CANCEL_WAIT)
         log.info("[%s] SELL all %s (%s)", self.mode, symbol, reason)
         try:
-            return self._client.close_position(symbol)
+            try:
+                return self._client.close_position(symbol)
+            except Exception as e:
+                if not _shares_held(e):
+                    raise
+                # Still held by the cancelling stop: give the cancel more time, then try once more.
+                log.warning("sell of %s refused while its stop was still cancelling; retrying", symbol)
+                self._wait_released(symbol, CANCEL_WAIT)
+                return self._client.close_position(symbol)
         except Exception:
             if stops:
                 try:
@@ -329,6 +342,11 @@ class AlpacaBroker:
                 except Exception as e:  # noqa: BLE001 - the service's protection check tries again
                     log.error("sell of %s refused and its stop couldn't be put back: %s", symbol, e)
             raise
+
+    def _wait_released(self, symbol: str, wait: float) -> None:
+        deadline = time.monotonic() + wait
+        while any(o.symbol == symbol for o in self.open_orders()) and time.monotonic() < deadline:
+            time.sleep(0.25)
 
     def cancel_all_orders(self, wait: float = 5.0) -> None:
         """Cancel every open order in the account, waiting briefly until Alpaca confirms.

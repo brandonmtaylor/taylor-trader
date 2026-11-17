@@ -235,3 +235,44 @@ def test_a_refused_sell_puts_the_stop_back():
     assert b._client.cancelled == ["s1"]
     req = b._client.submitted[0]
     assert req.symbol == "VRT" and float(req.qty) == 3 and float(req.stop_price) == 158.62
+
+
+def test_a_sell_refused_while_the_stop_is_still_cancelling_is_retried(monkeypatch):
+    """Near the open a stop can take seconds to cancel; a sell refused meanwhile is retried, not dropped."""
+    import taylortrader.broker as B
+    monkeypatch.setattr(B.time, "sleep", lambda s: None)
+
+    class Client:
+        def __init__(self):
+            self.cancelled, self.submitted, self.closes, self.polls = [], [], 0, 0
+
+        def get_orders(self, req):  # the stop shows as open (pending cancel) for the first few polls
+            self.polls += 1
+            stop = SimpleNamespace(id="s1", symbol="VRT", status="pending_cancel", side=OrderSide.SELL,
+                                   order_type=OrderType.STOP, stop_price="158.62", qty="1", legs=None)
+            return [stop] if self.polls < 4 else []
+
+        def cancel_order_by_id(self, oid):
+            self.cancelled.append(oid)
+
+        def close_position(self, symbol):
+            self.closes += 1
+            if self.closes == 1:
+                raise RuntimeError('{"code":40310000,"held_for_orders":"1","message":"insufficient qty available"}')
+            return "sold"
+
+        def submit_order(self, req):
+            self.submitted.append(req)
+
+    b = AlpacaBroker.__new__(AlpacaBroker)
+    b.paper, b._client = True, Client()
+    calls = {"n": 0}
+    real_wait = b._wait_released
+
+    def wait(symbol, w):  # first wait times out immediately, the retry's wait sees the release
+        calls["n"] += 1
+        if calls["n"] > 1:
+            real_wait(symbol, w)
+    b._wait_released = wait
+    assert b.close_position("VRT") == "sold"
+    assert b._client.closes == 2 and b._client.submitted == []  # sold on the retry; no stop put back
