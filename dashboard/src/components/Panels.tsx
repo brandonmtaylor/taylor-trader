@@ -44,7 +44,7 @@ export function ResultsPanel({ results, perf, error }: { results: Results | null
             </div>
             <div>
               <dt>Average win / loss</dt>
-              <dd>
+              <dd className="stats__pair">
                 <span className="is-up">{r.avg_win == null ? "—" : signedMoney(r.avg_win)}</span>
                 <span className="stats__slash"> / </span>
                 <span className="is-down">{r.avg_loss == null ? "—" : signedMoney(r.avg_loss)}</span>

@@ -639,6 +639,8 @@ select.input { width: 100%; }
 .stats dd { margin: 4px 0 0; font-family: var(--f-num); font-size: 19px; letter-spacing: -0.02em; white-space: nowrap; }
 .stats dd.stats__sub { margin-top: 2px; font-family: var(--f-text); font-size: 12px; letter-spacing: 0; color: var(--ink-3); white-space: normal; }
 .stats__slash { color: var(--ink-3); }
+.stats dd.stats__pair { white-space: normal; }
+.stats__pair > span:not(.stats__slash) { white-space: nowrap; }
 .streak { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 14px 0 4px; font-size: 13px; }
 .streak__label { color: var(--ink-3); margin-right: 4px; }
 .streak__pip { display: inline-grid; place-items: center; width: 24px; height: 24px; border-radius: 999px; font-family: var(--f-num); font-size: 11.5px; font-weight: 700; }
