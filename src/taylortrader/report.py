@@ -6,6 +6,8 @@ Everything that came from outside (symbols, reasons, error text) is escaped.
 
 from __future__ import annotations
 
+import json
+import re
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from html import escape
@@ -18,6 +20,8 @@ DASHBOARD = "http://127.0.0.1:8787"
 INK, INK2, INK3, RULE, SHEET, PAGE = "#16202a", "#4a5663", "#7a8591", "#e3e7eb", "#ffffff", "#f3f5f7"
 UP, DOWN, WARN, INFO = "#18794a", "#c4262d", "#a15c00", "#2f5fa8"
 MODE_COLOR = {"LIVE": "#c4262d", "PAPER": "#2f5fa8", "DRY RUN": "#4a5663"}
+# Long unbroken text (a URL, an error code) must wrap: otherwise phone mail apps zoom the whole email out.
+WRAP = "word-break:break-word;overflow-wrap:anywhere"
 STATUS_COLOR = {"filled": UP, "submitted": INFO, "dry-run": INFO, "blocked": WARN, "failed": DOWN,
                 "canceled": WARN, "expired": WARN, "rejected": DOWN}
 
@@ -135,11 +139,24 @@ def _trades_line(s: Summary) -> str:
     return " · ".join(bits)
 
 
+_JSON_ERROR = re.compile(r"\{[^{}]*\"message\"[^{}]*\}")
+
+
+def plain(text: str) -> str:
+    """Broker errors arrive as raw JSON ({"code":40310000,...,"message":"insufficient qty..."}): keep the message."""
+    def one(m: re.Match) -> str:
+        try:
+            return str(json.loads(m.group(0))["message"])
+        except (ValueError, KeyError, TypeError):
+            return m.group(0)
+    return _JSON_ERROR.sub(one, text or "")
+
+
 def _order_why(o: dict) -> str:
     why = o.get("reason") or ""
     if o.get("detail"):
         why += f" ({o['detail']})" if why else o["detail"]
-    return why
+    return plain(why)
 
 
 # --- plain text ----------------------------------------------------------------------------------
@@ -171,7 +188,7 @@ def text(s: Summary) -> str:
         lines += [f"  {et(o['ts'])} {o['side']} {o['symbol']} {qty_text(o.get('qty'))} [{o['status']}] {_order_why(o)}"
                   for o in s.orders]
     if s.problems:
-        lines += ["", "Problems:"] + [f"  {et(e['ts'])} {e['kind']}: {e['message']}" for e in s.problems[:20]]
+        lines += ["", "Problems:"] + [f"  {et(e['ts'])} {e['kind']}: {plain(e['message'])}" for e in s.problems[:20]]
     lines += ["", *s.notes, f"Dashboard (on your Mac): {DASHBOARD}",
               "If you stop getting this summary on trading days, TaylorTrader isn't running."]
     return "\n".join(lines)
@@ -284,7 +301,7 @@ def html(s: Summary) -> str:
                      f'{escape(o["side"])}</b> <b>{escape(o["symbol"])}</b>'
                      f'{f" · {q} sh" if q and q != "0" else ""} '
                      f'{_chip(o["status"], STATUS_COLOR.get(o["status"], INFO))}'
-                     f'<div style="font-size:12.5px;color:{INK2};margin-top:3px">{escape(_order_why(o))}</div></td></tr>')
+                     f'<div style="font-size:12.5px;color:{INK2};margin-top:3px;{WRAP}">{escape(_order_why(o))}</div></td></tr>')
         body += "</table>"
         rows.append(_section("Orders", body))
 
@@ -295,7 +312,7 @@ def html(s: Summary) -> str:
             col = DOWN if e["level"] == "error" else WARN
             body += (f'<tr><td style="{td};width:68px;color:{INK3};white-space:nowrap">{et(e["ts"])}</td>'
                      f'<td style="{td}"><b style="color:{col}">{escape(e["kind"].replace("_", " "))}</b>'
-                     f'<div style="font-size:12.5px;color:{INK2};margin-top:2px">{escape(e["message"])}</div></td></tr>')
+                     f'<div style="font-size:12.5px;color:{INK2};margin-top:2px;{WRAP}">{escape(plain(e["message"]))}</div></td></tr>')
         body += "</table>"
         rows.append(_section("Warnings and errors", body))
 

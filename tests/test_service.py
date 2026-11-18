@@ -915,3 +915,17 @@ def test_daily_summary_with_no_fills_says_so(svc):
     s = svc.daily_summary(svc.broker.snapshot())
     assert "Today's trades: 0 buys and 0 sells filled · no trades closed." in report.text(s)
     assert "+$0.00" not in report.text(s) and "$0.00 (+0.00%) today" in report.text(s)
+
+
+def test_summary_shows_broker_errors_as_plain_words_that_wrap():
+    from taylortrader import report
+
+    err = '{"available":"0","code":40310000,"held_for_orders":"1","message":"insufficient qty available","symbol":"X"}'
+    assert report.plain(f"APIError: {err}") == "APIError: insufficient qty available"
+    assert report.plain("RSI 80.8 > 68 {not json}") == "RSI 80.8 > 68 {not json}"
+    s = report.Summary(day=date(2026, 11, 17), mode="PAPER", equity=1000, day_pnl_pct=0, cash=1000, kill_on=False,
+                       positions=[], orders=[{"ts": NOW.isoformat(), "side": "sell", "symbol": "X", "qty": 1,
+                                              "status": "failed", "reason": "exit", "detail": err}],
+                       problems=[{"ts": NOW.isoformat(), "level": "error", "kind": "error", "message": err}])
+    page = report.html(s)
+    assert "40310000" not in page and "insufficient qty available" in page and "overflow-wrap:anywhere" in page
