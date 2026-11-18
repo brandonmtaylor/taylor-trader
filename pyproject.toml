@@ -33,6 +33,8 @@ dependencies = [
     "anthropic>=2.4,<3",
     "openai>=1.50,<4",
     "mcp>=2.3,<3",
+    # Draws the trade charts in the daily email (a picture: mail apps run no scripts).
+    "matplotlib>=3.9,<4",
 ]
 
 [project.optional-dependencies]

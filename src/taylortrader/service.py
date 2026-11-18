@@ -37,6 +37,7 @@ BAR = {"1Min": timedelta(minutes=1), "5Min": timedelta(minutes=5), "15Min": time
 LOOKBACK = {"1Min": timedelta(days=3), "5Min": timedelta(days=10), "15Min": timedelta(days=20),
             "1Hour": timedelta(days=90), "1Day": timedelta(days=420)}
 MAX_CONSECUTIVE_ERRORS = 5
+MAX_EMAIL_CHARTS = 4  # one picture per stock traded today, at most this many (each ~60 KB, light + dark)
 NO_PRICES_AFTER = timedelta(hours=1)
 EXIT_RETRY_AFTER = timedelta(minutes=5)  # a refused sell is retried this often, not every check  # at least this long with no new bar during market hours
 
@@ -536,7 +537,8 @@ class Service:
             self.summary_date = today
             return  # already sent today (e.g. the service restarted after the close)
         summary = self.daily_summary(snap)  # if this fails (a network blip), the next check tries again
-        self.alerts.summary(f"Daily summary {today}", report.text(summary), report.html(summary))
+        self.alerts.summary(f"Daily summary {today}", report.text(summary), report.html(summary),
+                            report.images(summary))
         self.journal.event("summary", str(today))
         self.summary_date = today
 
@@ -546,14 +548,15 @@ class Service:
         orders = [dict(o) for o in self.journal.orders_since(start.isoformat())]
         problems = [dict(e) for e in self.journal.events_since(start.isoformat()) if e["level"] in ("error", "warning")]
         stops = self.broker.symbols_with_stop()
-        closed, closed_trades, filled = None, [], None
+        closed, closed_trades, filled, todays_fills = None, [], None, []
         try:  # trades closed today, from Alpaca's fills (includes stop-loss fills)
             fills = self.broker.fills(days=60)
             strategy_of = {r["broker_order_id"]: r["strategy"] for r in self.journal.db.execute(
                 "SELECT broker_order_id, strategy FROM orders WHERE side='buy' AND broker_order_id IS NOT NULL")}
             res = stats.results(fills, strategy_of, self.now())
             closed, closed_trades = res["bot"]["today"], res["closed_today"]
-            todays = {(f.side, f.order_id) for f in fills if stats.utc_ts(f.ts).astimezone(NY).date() == today}
+            todays_fills = [f for f in fills if stats.utc_ts(f.ts).astimezone(NY).date() == today]
+            todays = {(f.side, f.order_id) for f in todays_fills}
             filled = {side: sum(1 for x in todays if x[0] == side) for side in ("buy", "sell")}
         except Exception as e:  # noqa: BLE001  the summary goes out without it
             log.warning("results for the summary unavailable: %s", e)
@@ -562,13 +565,41 @@ class Service:
                                          self.owner[p.symbol].name if p.symbol in self.owner
                                          else "invest plan" if p.symbol in plan else None)
                      for p in sorted(snap.positions.values(), key=lambda p: -abs(p.market_value))]
-        return report.Summary(day=today, mode="DRY RUN" if self.dry_run else self.broker.mode.upper(),
+        summary = report.Summary(day=today, mode="DRY RUN" if self.dry_run else self.broker.mode.upper(),
                               equity=snap.equity, day_pnl_pct=snap.day_pnl_pct, cash=snap.cash, kill_on=self.kill_on,
                               day_pnl=snap.equity - snap.day_start_equity if snap.day_start_equity > 0 else None,
                               positions=positions, orders=orders, problems=problems, closed=closed,
                               closed_trades=closed_trades, filled=filled,
                               loss_limit_pct=self.cfg.limits.max_daily_loss_pct,
                               notes=[n for n in [self.invest.summary_line(snap)] if n])
+        summary.charts = self._summary_charts(today, todays_fills, closed_trades, snap)
+        return summary
+
+    def _summary_charts(self, today, todays_fills, closed_trades, snap) -> list:
+        """Pictures for the email: the day's price of each stock traded today with its buys and sells,
+        or, on a day without trades, the account's value through the day. Never stops the email."""
+        from taylortrader import emailchart
+
+        charts = []
+        try:
+            start = datetime.combine(today, datetime.min.time(), NY).astimezone(UTC)
+            earlier = {t["symbol"]: t for t in closed_trades
+                       if datetime.fromisoformat(t["opened"]).astimezone(NY).date() < today}
+            symbols = list(dict.fromkeys(f.symbol for f in sorted(todays_fills, key=lambda f: stats.utc_ts(f.ts))))
+            for sym in symbols[:MAX_EMAIL_CHARTS]:
+                bars = self.market_data.bars(sym, "5Min", start)
+                marks = [emailchart.Mark(stats.utc_ts(f.ts), f.price, f.side) for f in todays_fills if f.symbol == sym]
+                t = earlier.get(sym)
+                entry = (t["entry"], (f"Bought ${t['entry']:,.2f} on "
+                         f"{datetime.fromisoformat(t['opened']).astimezone(NY):%b %-d}")) if t else None
+                if c := emailchart.trade_chart(sym, bars, marks, entry):
+                    charts.append(c)
+            if not symbols:
+                c = emailchart.equity_chart(self.broker.intraday_equity(), snap.day_start_equity or None)
+                charts += [c] if c else []
+        except Exception as e:  # noqa: BLE001  the summary goes out without its charts
+            log.warning("charts for the summary unavailable: %s", e)
+        return charts
 
     def daily_summary_text(self, snap) -> str:
         return report.text(self.daily_summary(snap))

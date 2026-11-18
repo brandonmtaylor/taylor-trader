@@ -200,6 +200,11 @@ class AlpacaBroker:
         h = self._client.get_portfolio_history(GetPortfolioHistoryRequest(period=period, timeframe="1D"))
         return [(int(t), float(e)) for t, e in zip(h.timestamp or [], h.equity or []) if e]
 
+    def intraday_equity(self) -> list[tuple[datetime, float]]:
+        """Today's account value every 5 minutes, regular hours (for the chart in the daily email)."""
+        h = self._client.get_portfolio_history(GetPortfolioHistoryRequest(period="1D", timeframe="5Min"))
+        return [(datetime.fromtimestamp(int(t), UTC), float(e)) for t, e in zip(h.timestamp or [], h.equity or []) if e]
+
     def fills(self, days: int = 365) -> list:
         """Filled buys and sells (stop-loss legs included), for the results panel."""
         from taylortrader.stats import Fill

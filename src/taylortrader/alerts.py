@@ -61,7 +61,8 @@ class EmailNotifier(Notifier):
         self.sender, self._password, self.recipients = sender, password, recipients
         self.host, self.port = host, port
 
-    def send(self, title: str, message: str, level: Level = Level.INFO, html: str | None = None) -> None:
+    def send(self, title: str, message: str, level: Level = Level.INFO, html: str | None = None,
+             images: dict[str, bytes] | None = None) -> None:
         msg = EmailMessage()
         msg["Subject"] = f"[TaylorTrader] {title}"
         msg["From"] = self.sender
@@ -69,6 +70,10 @@ class EmailNotifier(Notifier):
         msg.set_content(message)  # plain text: what mail apps without HTML show
         if html:
             msg.add_alternative(html, subtype="html")
+            page = msg.get_payload()[1]
+            for cid, png in (images or {}).items():  # pictures the HTML shows inline (src="cid:...")
+                page.add_related(png, maintype="image", subtype="png", cid=f"<{cid}>",
+                                 disposition="inline", filename=f"{cid}.png")
         with smtplib.SMTP(self.host, self.port, timeout=30) as s:
             s.starttls(context=ssl.create_default_context())  # the default doesn't verify the server
             s.login(self.sender, self._password.get_secret_value())
@@ -107,12 +112,13 @@ class Alerts:
                 log.error("alert via %s failed: %s", type(n).__name__, e)
         return True
 
-    def summary(self, title: str, message: str, html: str | None = None) -> None:
+    def summary(self, title: str, message: str, html: str | None = None,
+                images: dict[str, bytes] | None = None) -> None:
         """Daily summary: email (HTML with a plain-text fallback), plus a short push."""
         for n in self.email:
             try:
                 if html and isinstance(n, EmailNotifier):
-                    n.send(title, redact(message), Level.INFO, html=redact(html))
+                    n.send(title, redact(message), Level.INFO, html=redact(html), images=images)
                 else:
                     n.send(title, redact(message), Level.INFO)
             except Exception as e:  # noqa: BLE001
