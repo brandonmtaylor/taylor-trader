@@ -34,6 +34,7 @@ export interface Status {
   limits: Limits;
   alerts: string[];
   server_time: string;
+  demo?: boolean; // `taylortrader dashboard --demo`: a made-up account
 }
 
 export interface PositionRow {

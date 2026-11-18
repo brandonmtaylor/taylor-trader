@@ -11,6 +11,7 @@
   journal [--import-legacy DB]   recent orders; optionally import the original bot's trades
   install-service [--dry-run]    write launchd agents (the dashboard can also start/stop the service)
   dashboard [--port 8787]        setup, settings and status at http://127.0.0.1:8787 (this machine only)
+  dashboard --demo               the dashboard on a made-up account: no keys, no network, nothing saved
   wifi on|off|status             let your phone open the dashboard on the same Wi-Fi, with a passcode
   mcp                            MCP server over stdio, for Claude Code or the Claude desktop app
 """
@@ -34,6 +35,7 @@ from taylortrader.strategies import get_strategy, list_strategies
 log = logging.getLogger("taylortrader")
 
 DASHBOARD_PORT = 8787  # the background agent always uses this one (see launchd.py)
+DEMO_PORT = 8790  # demo mode's default, so it runs next to the real dashboard
 
 
 def _parse_params(items: list[str]) -> dict:
@@ -460,6 +462,12 @@ def cmd_install_service(args) -> int:
 
 def cmd_dashboard(args) -> int:
     """Works before anything is set up: the dashboard is where setup happens."""
+    if args.demo:
+        if args.background or args.restart or args.foreground_again:
+            print("error: --demo runs in this terminal only.", file=sys.stderr)
+            return 2
+        return _demo_dashboard(args)
+    args.port = args.port or DASHBOARD_PORT
     if args.port != DASHBOARD_PORT and (args.background or args.restart):
         print(f"error: the background dashboard always uses port {DASHBOARD_PORT}. Drop --port, or run "
               f"`taylortrader dashboard --port {args.port}` to use that port in this terminal.", file=sys.stderr)
@@ -557,6 +565,38 @@ def cmd_wifi(args) -> int:
     return 0
 
 
+def _demo_dashboard(args) -> int:
+    """A made-up paper account in a temporary folder: never reads your settings, keys or journal,
+    and never connects to anything."""
+    import shutil
+    import tempfile
+    import threading
+    import webbrowser
+
+    import uvicorn
+
+    from taylortrader import demo
+    from taylortrader.web.api import create_app
+
+    setup_logging(level=logging.INFO)
+    port = args.port or DEMO_PORT
+    folder = Path(tempfile.mkdtemp(prefix="taylortrader-demo-"))
+    try:
+        rt = demo.make_runtime(folder)
+        demo.keep_beating(rt.journal)
+        url = f"http://127.0.0.1:{port}"
+        print(f"TaylorTrader DEMO: {url}  (Ctrl-C to stop)\n"
+              "Made-up account and prices. No keys, no Alpaca, nothing sent; settings and trades you change\n"
+              "here live in a temporary folder that's deleted when you stop.")
+        if not args.no_open:
+            threading.Timer(1.0, lambda: webbrowser.open(url)).start()
+        uvicorn.run(create_app(rt, project=folder), host="127.0.0.1", port=port, log_level="warning",
+                    log_config=None, proxy_headers=False, timeout_graceful_shutdown=1)
+    finally:
+        shutil.rmtree(folder, ignore_errors=True)
+    return 0
+
+
 def cmd_mcp(args) -> int:
     from taylortrader.mcp_server import main as serve
 
@@ -632,7 +672,9 @@ def main(argv: list[str] | None = None) -> int:
     inst.add_argument("--dry-run", action="store_true", help="service decides and alerts but never orders")
     inst.set_defaults(fn=cmd_install_service)
     dash = sub.add_parser("dashboard", help="open the dashboard (the default with no command)")
-    dash.add_argument("--port", type=int, default=DASHBOARD_PORT, help="in this terminal only, not with --background")
+    dash.add_argument("--port", type=int, help=f"in this terminal only, not with --background (default "
+                      f"{DASHBOARD_PORT}; {DEMO_PORT} with --demo)")
+    dash.add_argument("--demo", action="store_true", help="a made-up account: no keys, no network, nothing saved")
     dash.add_argument("--no-open", action="store_true", help="don't open a browser tab")
     dash.add_argument("--background", action="store_true", help="run it as a background service (macOS)")
     dash.add_argument("--restart", action="store_true", help="restart the background dashboard (after an update)")

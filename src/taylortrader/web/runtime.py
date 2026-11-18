@@ -44,6 +44,7 @@ class Runtime:
     broker_error: str | None = None
     alert_notes: list[str] = field(default_factory=list)
     journal: Journal | None = None
+    demo: bool = False  # made-up account (taylortrader.demo): no keys, Keychain or launchd
 
     def __post_init__(self):
         self.reload()

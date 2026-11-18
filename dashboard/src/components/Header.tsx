@@ -167,6 +167,7 @@ export function Header({ status, setup, error, route, onStatus, onSetup }: {
       <div className={`modeband modeband--${mode}`}>
         <span className="modeband__label">
           {mode === "live" ? "Live trading · real money" : "Paper trading · simulated money"}
+          {status?.demo && " · Demo"}
         </span>
         {status?.dry_run && <span className="modeband__dry">Dry run · decisions only, no orders</span>}
         {status?.configured && (

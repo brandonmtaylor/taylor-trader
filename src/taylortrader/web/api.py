@@ -212,6 +212,8 @@ class BacktestBody(BaseModel):
 SIGN_IN = "Sign in with the dashboard passcode."
 OPEN_PATHS = {"/api/session", "/api/login"}
 MAC_ONLY = "Going live and API keys can only be changed on the Mac running TaylorTrader."
+# Writes demo mode refuses: they reach keys, the background service, or send something somewhere.
+DEMO_BLOCKED = ("/api/secrets", "/api/alpaca/test", "/api/alerts/test", "/api/ai/test", "/api/service", "/api/mode")
 
 
 def create_app(rt: Runtime, cache_ttl: float = 10.0, project: Path | None = None,
@@ -242,6 +244,10 @@ def create_app(rt: Runtime, cache_ttl: float = 10.0, project: Path | None = None
             return JSONResponse({"detail": FORBIDDEN}, status_code=403)
         if path.startswith("/api/") and path not in OPEN_PATHS and not signed_in(request):
             return JSONResponse({"detail": SIGN_IN}, status_code=401)
+        if rt.demo and request.method != "GET" and path.startswith(DEMO_BLOCKED):
+            from taylortrader.demo import NOT_IN_DEMO
+
+            return JSONResponse({"detail": NOT_IN_DEMO}, status_code=403)
         return await call_next(request)
 
     def mac_only(request: Request) -> None:
@@ -270,6 +276,8 @@ def create_app(rt: Runtime, cache_ttl: float = 10.0, project: Path | None = None
         moved = [(current.ai.endpoint != new.ai.endpoint, "OPENAI_API_KEY", "the AI endpoint"),
                  (current.alerts.smtp_host != new.alerts.smtp_host, "EMAIL_PASSWORD", "the email server"),
                  (current.alerts.ntfy_server != new.alerts.ntfy_server, "NTFY_TOPIC", "the ntfy server")]
+        if rt.demo:
+            return  # nothing stored to forget
         for changed, name, what in moved:
             if changed and get_secret(name, rt.dotenv_path) is not None:
                 delete_secret(name, rt.dotenv_path)
@@ -330,9 +338,18 @@ def create_app(rt: Runtime, cache_ttl: float = 10.0, project: Path | None = None
     def setup() -> dict[str, Any]:
         """What the first-run screens need. Secrets map to where they're stored, never to values."""
         cfg = rt.settings
+        if rt.demo:
+            from taylortrader import demo
+
+            secrets = {n: demo.SECRETS.get(n) for n in SETTABLE}
+            store, service, mcp = "Keychain", demo.SERVICE, demo.MCP
+        else:
+            secrets = {n: secret_source(n, rt.dotenv_path) for n in SETTABLE}
+            store = "Keychain" if keychain_available() else ".env"
+            service, mcp = launchd.status(), mcp_setup(Path(rt.config_path).parent)
         return {
             "configured": rt.configured,
-            "config_path": str(rt.config_path),
+            "config_path": "config.toml" if rt.demo else str(rt.config_path),
             "config_error": rt.config_error,
             "connected": rt.broker is not None,
             "broker_error": rt.broker_error,
@@ -340,10 +357,10 @@ def create_app(rt: Runtime, cache_ttl: float = 10.0, project: Path | None = None
             "dry_run": cfg.dry_run,
             "has_strategy": bool(cfg.enabled_strategies),
             "has_plan": cfg.invest.enabled and bool(cfg.invest.holdings),
-            "secret_store": "Keychain" if keychain_available() else ".env",
-            "secrets": {n: secret_source(n, rt.dotenv_path) for n in SETTABLE},
-            "service": launchd.status(),
-            "mcp": mcp_setup(Path(rt.config_path).parent),
+            "secret_store": store,
+            "secrets": secrets,
+            "service": service,
+            "mcp": mcp,
         }
 
     @app.get("/api/session")
@@ -406,6 +423,7 @@ def create_app(rt: Runtime, cache_ttl: float = 10.0, project: Path | None = None
             "limits": asdict(cfg.limits),
             "alerts": rt.alert_notes,
             "server_time": now.isoformat(),
+            "demo": rt.demo,
         }
 
     @app.get("/api/account")
@@ -927,10 +945,10 @@ def create_app(rt: Runtime, cache_ttl: float = 10.0, project: Path | None = None
         days = min(body.days, 60) if body.timeframe == "1Min" else body.days
         try:
             strat = get_strategy(body.strategy, body.params)
-            creds = load_alpaca_credentials("paper", rt.dotenv_path)  # history only; never live keys
+            creds = None if rt.demo else load_alpaca_credentials("paper", rt.dotenv_path)  # history only; never live keys
         except (ValueError, SecretsError) as e:
             raise HTTPException(422, str(e)) from None
-        md = MarketData(creds, rt.settings.data_dir / "cache", feed="sip")
+        md = need_data() if rt.demo else MarketData(creds, rt.settings.data_dir / "cache", feed="sip")
         symbol = body.symbol.strip().upper()
         df = _broker_call(lambda: md.bars(symbol, body.timeframe, datetime.now(UTC) - timedelta(days=days)))
         if len(df) <= strat.warmup + 2:
