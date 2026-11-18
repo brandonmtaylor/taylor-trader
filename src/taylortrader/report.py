@@ -94,6 +94,19 @@ def _signed_money(n: float) -> str:
     return f"+${n:,.2f}" if n > 0 else _money(n)
 
 
+INVEST_PLAN = "invest plan"  # the owner name of invest plan holdings, which carry no stop on purpose
+
+
+def _stop_words(p: PositionLine) -> str:
+    return "yes" if p.has_stop else "not used (invest plan)" if p.owner == INVEST_PLAN else "NO"
+
+
+def _stop_chip(p: PositionLine) -> str:
+    if p.has_stop:
+        return _chip("✓ At Alpaca", UP)
+    return _chip("Not used", INK3) if p.owner == INVEST_PLAN else _chip("✕ None", DOWN)
+
+
 def _gain_pct(p: PositionLine) -> float | None:
     if not p.avg or not p.qty:
         return None
@@ -181,7 +194,7 @@ def text(s: Summary) -> str:
     for p in s.positions:
         g = _gain_pct(p)
         lines.append(f"  {p.symbol}: {qty_text(p.qty)} sh, {_money(p.value)}"
-                     f"{f' ({g:+.1f}%)' if g is not None else ''}, stop {'yes' if p.has_stop else 'NO'}, "
+                     f"{f' ({g:+.1f}%)' if g is not None else ''}, stop {_stop_words(p)}, "
                      f"{'managed by ' + p.owner if p.owner else 'not managed by the bot'}")
     if s.orders:
         lines += ["", "Orders (New York time):"]
@@ -284,7 +297,7 @@ def html(s: Summary) -> str:
                      f'<div style="font-size:12px;color:{INK3}">{qty_text(p.qty)} sh · {owner}</div></td>'
                      f'<td style="{td};text-align:right;white-space:nowrap">{_money(p.value)}</td>'
                      f'<td style="{td};text-align:right;color:{gcol};white-space:nowrap">{gtxt}</td>'
-                     f'<td style="{td}">{_chip("✓ At Alpaca", UP) if p.has_stop else _chip("✕ None", DOWN)}</td></tr>')
+                     f'<td style="{td}">{_stop_chip(p)}</td></tr>')
         body += "</table>"
     else:
         body = f'<div style="font-size:14px;color:{INK2}">Nothing held.</div>'

@@ -929,3 +929,16 @@ def test_summary_shows_broker_errors_as_plain_words_that_wrap():
                        problems=[{"ts": NOW.isoformat(), "level": "error", "kind": "error", "message": err}])
     page = report.html(s)
     assert "40310000" not in page and "insufficient qty available" in page and "overflow-wrap:anywhere" in page
+
+
+def test_summary_says_invest_plan_holdings_use_no_stop_on_purpose():
+    from taylortrader import report
+
+    s = report.Summary(day=date(2026, 11, 17), mode="PAPER", equity=1000, day_pnl_pct=0, cash=500, kill_on=False,
+                       positions=[report.PositionLine("VTI", 1, 300, 290, False, "invest plan"),
+                                  report.PositionLine("XYZ", 1, 200, 190, False, None)],
+                       orders=[], problems=[])
+    text, page = report.text(s), report.html(s)
+    assert "VTI: 1 sh, $300.00 (+3.4%), stop not used (invest plan)" in text
+    assert "XYZ: 1 sh, $200.00 (+5.3%), stop NO" in text  # a bare position is still flagged
+    assert page.count("Not used") == 1 and page.count("✕ None") == 1
