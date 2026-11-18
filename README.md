@@ -6,11 +6,11 @@ day, buys and sells when your strategies say so, protects those trades with stop
 what it did. Mix short-term trading strategies, an AI that makes the calls, and long-term investing on
 a schedule. No staring at charts.
 
-![The TaylorTrader dashboard: account value, the bot's heartbeat, and growth of $100 against SPY](https://raw.githubusercontent.com/brandonmtaylor/taylor-trader/main/docs/images/overview.png)
+![The TaylorTrader dashboard: account value, the bot's heartbeat, and growth of $100 against SPY (made-up demo account)](https://raw.githubusercontent.com/brandonmtaylor/taylor-trader/main/docs/images/overview.png)
 
 - **Runs on its own.** Once it's set up, it trades and invests by itself during market hours, checks
-  that every position is protected, and sends you a summary after each close. You step in only when
-  you want to.
+  that every position is protected, and emails you a summary after each close: what you made or lost
+  that day and every trade it closed. You step in only when you want to.
 - **Talk to it from Claude.** Describe an idea in plain English and Claude turns it into rules,
   backtests them against buying and holding, and adds the strategy when you say so. Ask how it's
   doing, pause it, or move a stock to another strategy, all in conversation.
@@ -44,26 +44,31 @@ Claude: Writes the rules, backtests them on both stocks against buying and holdi
 **Every trade on the chart.** Each buy and sell, the stop-loss, and how much of the move each sell kept.
 Hover for any bar's price, and add moving averages, RSI and MACD.
 
-![The trade chart: hovering shows each bar's price; the 20-bar average, RSI and MACD are switched on, then the range changes to 3 months](https://raw.githubusercontent.com/brandonmtaylor/taylor-trader/main/docs/images/trade-chart.gif)
+![The trade chart: hovering shows each bar's price; the 20-bar average, RSI and MACD are switched on, then the range changes to 3 months (made-up demo account)](https://raw.githubusercontent.com/brandonmtaylor/taylor-trader/main/docs/images/trade-chart.gif)
 
 **The AI's reasoning, call by call.**
 
-![AI decisions: each call with its confidence and a one-line reason](https://raw.githubusercontent.com/brandonmtaylor/taylor-trader/main/docs/images/ai-decisions.png)
+![AI decisions: each call with its confidence and a one-line reason (made-up demo account)](https://raw.githubusercontent.com/brandonmtaylor/taylor-trader/main/docs/images/ai-decisions.png)
 
 **What if you'd started 10 years ago?** Your investing plan, run on real past prices for each mix.
 
-![What if you'd started 10 years ago: $200 a month in each ready-made mix, run on real past prices](https://raw.githubusercontent.com/brandonmtaylor/taylor-trader/main/docs/images/what-if.png)
+![What if you'd started 10 years ago: $200 a month in each ready-made mix (made-up demo prices)](https://raw.githubusercontent.com/brandonmtaylor/taylor-trader/main/docs/images/what-if.png)
 
 <table>
 <tr>
-<td width="62%"><img alt="The Strategies page: strategy, symbols, bar size, position size, stop-loss and a one-click backtest" src="https://raw.githubusercontent.com/brandonmtaylor/taylor-trader/main/docs/images/strategies.png"></td>
-<td width="38%"><img alt="The dashboard on a phone, over the home Wi-Fi" src="https://raw.githubusercontent.com/brandonmtaylor/taylor-trader/main/docs/images/phone.png"></td>
+<td width="62%"><img alt="The Strategies page: strategy, symbols, bar size, position size, stop-loss and a one-click backtest (made-up demo account)" src="https://raw.githubusercontent.com/brandonmtaylor/taylor-trader/main/docs/images/strategies.png"></td>
+<td width="38%"><img alt="The dashboard on a phone, over the home Wi-Fi (made-up demo account)" src="https://raw.githubusercontent.com/brandonmtaylor/taylor-trader/main/docs/images/phone.png"></td>
 </tr>
 <tr>
 <td>Set up strategies and backtest them against buying and holding, without code.</td>
 <td>Open it from your phone on the same Wi-Fi, with a passcode.</td>
 </tr>
 </table>
+
+**A summary after every close.** The day in dollars, each trade it closed and what it made or lost, what
+it holds and whether each position has its stop, and anything that went wrong.
+
+<img width="420" alt="The daily summary email on a phone: the day's gain, three closed trades with one loss, positions with their stop-losses, and the day's orders (made-up demo account)" src="https://raw.githubusercontent.com/brandonmtaylor/taylor-trader/main/docs/images/email.png">
 
 ## Install
 **Platforms:** macOS is fully supported. Linux runs the dashboard, backtests and a foreground
@@ -79,6 +84,9 @@ taylortrader                                      # opens the dashboard and walk
 Setup takes about ten minutes: connect your Alpaca paper keys, pick a strategy and backtest it, check
 the safety limits, optionally add phone or email alerts, and start the bot in **dry run** (it decides
 and alerts, but places no orders). Then switch between Dry run, Paper and Live at the top of the page.
+
+**Just looking?** `taylortrader dashboard --demo` opens the whole dashboard on a made-up account: no
+Alpaca keys, nothing sent anywhere, and nothing kept after you close it.
 
 Settings, the trade journal and logs live in `~/Library/Application Support/TaylorTrader` on macOS
 (`~/.local/share/taylortrader` on Linux). Update with `uv tool upgrade taylortrader`. The dashboard's
@@ -182,8 +190,8 @@ The ready-made mixes are examples, not recommendations. What's built and what's 
   fill below its price when a stock gaps down or moves fast. (The invest plan doesn't use stops: holding
   through dips is its point.)
 - **Every order is checked** against position size, total exposure, daily loss, buys per day, stop
-  width, and a pause switch. Settings can tighten the built-in hard limits but never loosen them.
-  Sells are never blocked.
+  width, and a pause switch. Settings shows a recommended starting value for each limit, with the reason,
+  and a warning past a sensible level. It can tighten the built-in hard limits but never loosen them. Sells are never blocked.
 - **It only manages what it bought.** Shares you already owned aren't touched, even if you add the
   symbol to a strategy.
 - **Keys stay secret.** They live in the macOS Keychain (or a private `.env` file elsewhere), are
@@ -207,6 +215,7 @@ taylortrader kill on                # pause new buys; sells and stops keep worki
 taylortrader journal                # recent orders and the heartbeat
 taylortrader dashboard --background # keep the dashboard running (also --restart, --stop)
 taylortrader wifi on                # open it to your phone on the same Wi-Fi
+taylortrader dashboard --demo       # try it on a made-up account: no keys, no network, nothing saved
 ```
 Settings live in `config.toml` with no secrets in it;
 [config.example.toml](https://github.com/brandonmtaylor/taylor-trader/blob/main/config.example.toml)
