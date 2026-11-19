@@ -29,7 +29,7 @@ dependencies = [
     "fastapi>=0.115,<1",
     "uvicorn>=0.32,<1",
     # Unofficial Yahoo Finance client, for feed = "yahoo". Breaks when Yahoo changes; pin and upgrade on purpose.
-    "yfinance==1.7.0",
+    "yfinance==1.8.0",
     "anthropic>=2.4,<3",
     "openai>=1.50,<4",
     "mcp>=2.3,<3",
